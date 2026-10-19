@@ -1,0 +1,282 @@
+tpt-rustvac — Complete Design Specification
+Repo name: tpt-rustvac
+Binary: rustvac (CLI), rustvac-gui (GUI)
+Tagline: Find your Rust target folders. Measure any folder. Vacuum the rest.
+1. Scope
+In:
+Scan a root directory and discover Cargo target folders
+Measure any folder the user points at (general disk usage)
+Report size, age, and file count
+Present results in a navigable tree view
+Compress or remove folders safely
+Restore compressed folders later
+Out (for v1):
+Dependency deduplication
+sccache integration
+Per-crate analysis
+Cross-machine sync
+Network drives / cloud storage
+Design principles:
+Scan is read-only and safe. Nothing is deleted without explicit confirmation.
+Never block the UI. Scanning and compressing happen off the main thread.
+Memory stays bounded. Aggregate sizes, don't index every file.
+Two modes, one engine. Rust-target scanning is a specialized filter on top of a general measurement engine.
+2. Workspace Layout
+All crates use the tpt-rustvac- prefix. Binary names stay short for usability.
+
+tpt-rustvac/
+├── Cargo.toml                    # [workspace] members, shared deps
+├── crates/
+│   ├── tpt-rustvac-core/         # scan, measure, compress, restore  ← zero UI
+│   ├── tpt-rustvac-cli/          # binary: rustvac
+│   └── tpt-rustvac-gui/          # binary: rustvac-gui  (egui / eframe)
+├── fixtures/                     # fake projects for tests
+└── README.md
+
+# Root Cargo.toml
+[workspace]
+members = [
+    "crates/tpt-rustvac-core",
+    "crates/tpt-rustvac-cli",
+    "crates/tpt-rustvac-gui",
+]
+resolver = "2"
+
+Ship the GUI behind a separate crate so the CLI stays fast to compile:
+
+cargo run -p tpt-rustvac-cli -- scan --older-than 2d
+cargo run -p tpt-rustvac-cli -- measure ~/Downloads
+cargo run -p tpt-rustvac-gui
+
+3. Core Data Model
+Architecture decision: flat arena + indices, not nested Vec<Children>. egui needs to mutate expanded while iterating, and nested ownership makes that miserable.
+
+// tpt-rustvac-core
+pub struct Arena {
+    nodes: Vec<Node>,        // index 0 = scan root
+}
+
+pub struct Node {
+    pub id: NodeId,
+    pub parent: Option<NodeId>,
+    pub name: String,
+    pub path: PathBuf,
+    pub kind: Kind,
+    pub size: u64,
+    pub files: u64,
+    pub newest: Option<SystemTime>,   // proxy for "last touched"
+    pub state: State,
+    pub expanded: bool,
+    pub selected: bool,
+    pub children: Vec<NodeId>,
+    pub is_target: bool,              // true only in RustTargets mode
+    pub hardlink_inode: Option<u64>,  // dedup hardlinks in General mode
+}
+
+pub enum Kind {
+    Root,
+    Project,        // only in RustTargets mode
+    Target,         // only in RustTargets mode
+    Directory,      // general mode
+    File,           // optional: show large files as leaf nodes
+}
+
+pub enum State {
+    Pending,
+    Scanning,
+    Done,
+    Failed(String),
+    Busy,           // modified in last 60s
+    Archived,
+}
+
+Age calculation: Use mtime of the newest file inside target/. Do not use atime — Linux/macOS/Windows largely don't update it. Newest-file-mtime is the honest proxy for "when was this last built."
+Target resolution (RustTargets mode)
+A target folder is not always a sibling of Cargo.toml. Resolve in this order:
+CARGO_TARGET_DIR env var
+build.target-dir in ./.cargo/config.toml and ~/.cargo/config.toml
+default: <project>/target
+In a Cargo workspace, only the workspace root has a target/. Once you find one, stop descending into that project — otherwise every member crate reports a phantom hit.
+4. Two Scan Modes
+The core engine gets a Mode enum. Everything downstream (tree, filters, compression) works identically for both.
+
+// tpt-rustvac-core
+pub enum ScanMode {
+    /// Find Rust `target/` folders only
+    RustTargets,
+    /// Measure any folder the user points at
+    General(PathBuf),
+}
+
+pub struct ScanRequest {
+    pub mode: ScanMode,
+    pub roots: Vec<PathBuf>,
+    pub older_than: Option<Duration>,
+    pub min_size: Option<u64>,
+    pub follow_links: bool,
+    pub cross_device: bool,
+    pub exclude: Vec<glob::Pattern>,
+}
+
+RustTargets mode
+Walks looking for Cargo.toml, resolves the real target/ path via env/config, stops descending once found.
+General mode
+Walks the given path directly. Every directory becomes a Node. No Cargo awareness.
+5. Scanning Strategy
+Traverse with the ignore crate (WalkBuilder with git_ignore(false), hidden(false), follow_links(false)) — it has a parallel walker, which matters a lot on a 90 GiB debug/ folder. follow_links(false) also kills symlink-loop hangs for free.
+Fan out across projects with rayon; fan out within a project with WalkParallel.
+Lazy internals: compute the aggregate size of target/ in one pass, but only build child Nodes for debug/, release/, doc/ when the user expands the row.
+Stream results back over an mpsc channel as ScanEvent::{Discovered, Progress, NodeDone, Failed}. The GUI polls it each frame and calls ctx.request_repaint().
+Active-build guard: if anything inside a target was modified in the last 60s, mark it Busy and refuse to compress it. Cheap, robust, and it won't fight a running cargo watch.
+Budget: 40 projects / ~200 GiB scanned in <10s on an SSD, UI pinned at 60fps the whole time.
+6. Edge Cases & Gotchas
+These are the things that will bite you if you don't plan for them:
+Issue
+Fix
+Hardlinks inflate size
+Track (dev, inode) in a HashSet<u64> during the walk; skip files seen before
+Permission denied on subdirs
+Count the error, surface in status bar, keep walking
+Symlink loops
+follow_links(false) by default; WalkBuilder handles this
+Special files (sockets, FIFOs, /dev)
+Skip anything that isn't is_file() or is_dir()
+Cross-device walks (e.g., scanning / on Linux crosses into mounted drives)
+Default to cross_device(false); opt in with a flag
+Massive directories (10M+ files)
+Stream ScanEvents over mpsc; never hold the full tree in memory before rendering
+Non-UTF-8 paths
+Carry PathBuf everywhere; convert to String only at display time with lossy fallback
+Windows long paths
+Prefix with \\?\ before any mutation
+ExFAT/FAT externals (no proper mtime)
+Age shows unknown, never blocks
+Scan interrupted
+State::Failed on the subtree, root still usable
+Hardlink handling is the one people forget. If you scan ~/ and someone has hardlinked a 5 GB database in three places, a naive scanner reports 15 GB. Track inodes.
+7. GUI Design (egui + eframe)
+CollapsingHeader is the tree — no third-party tree widget needed. Put the metadata inside the header using a right-to-left layout so columns stay aligned.
+
+┌────────────────────────────────────────────────────────────────────┐
+│ tpt-rustvac   [ 🦀 Rust Targets ▾ ]  [ ~/Code ▼ ]  [ ⟳ ]  🔍       │
+│ 218.4 GiB across 37 targets        ▓▓▓▓▓░░  scanning 12/37     │
+├────────────────────────────────────────────────────────────────────┤
+│ ▾ ☑ ~/Code                                            218.4 GiB     │
+│   ▾  api-server                                       91.2 GiB    │
+│     ▾ ☑ target                                   91.2GiB ████ 91d │
+│         debug                                    84.0 GiB           │
+│         release                                   7.2 GiB           │
+│   ▸ ☐ web-app                                    44.0 GiB ██░  3d │
+│   ▸  legacy-tool  (archived)                    12.1 GiB █░░ 210d │
+├────────────────────────────────────────────────────────────────────┤
+│ api-server/target · 91.2 GiB · last built 91d ago                  │
+│ [ Compress .tar.zst ] [ Move to Trash ] [ Reveal ]   Reclaim 91.2G │
+└────────────────────────────────────────────────────────────────────┘
+
+Mode toggle in toolbar:
+🦀 Rust Targets — shows only Rust projects
+📁 Any Folder — general folder measurement
+🔍 Mixed — shows everything, badges Rust targets with 🦀
+Rows: checkbox · disclosure triangle · name · size (monospace, right-aligned) · proportional bar · age.
+Encoding, not color alone:
+Bar length = share of total (perceptual ranking at a glance)
+Age: <7d dim, 7–30d normal, >30d amber, >90d red
+Archived rows get a badge and are struck through
+Interactions:
+Input
+Action
+Click row
+select, populate details pane
+Space / Enter
+toggle checkbox
+Right-click
+menu: Compress · Trash · Reveal · Copy path
+Cmd/Ctrl+A
+select all filtered
+/
+focus search
+s
+sort by size (toggle asc/desc)
+Toolbar filters: min age, min size, search by project name, "hide archived." Sort default: size descending — the biggest offender should be the first thing you see.
+Confirmation is non-negotiable. The action button opens a dialog that lists the exact absolute paths and total bytes, with Move to Trash as the default and Delete permanently behind a second click. Use the trash crate.
+Status bar: last scan time, count, Reclaimable: N GiB, and any Permission denied paths (never silently swallow these).
+8. Compression
+Default: archive, don't transparently compress. Transparent FS compression is per-OS and unreliable across platforms; archiving is honest and cross-platform.
+Format: .tar.zst via the zstd crate (multithreaded, excellent ratio on object files — expect 60–75% savings on a target/).
+Store in a central vacuum: ~/.rustvac/archive/<slug>-<yyyymmdd>.tar.zst where slug = sanitized project path.
+After a verified write, remove the original target/.
+Restore: rustvac restore <slug> --into <project> unpacks it back. Cargo will notice staleness and rebuild incrementally — that's fine and expected.
+Optional Windows-only fast path (std::process::Command):
+
+compact /c /s /q /f "<path>\target"
+
+Exposed as --mode transparent, documented as Windows-only.
+9. CLI Surface
+
+# Rust-target mode
+rustvac scan [--path ~/Code] [--older-than 2d] [--json]
+rustvac list                       # human table, size desc
+
+# General folder measurement
+rustvac measure <path> [--depth 3] [--top 20] [--json]
+rustvac measure ~/Downloads --min-size 100MB
+rustvac measure / --cross-device --exclude "**/.git/**"
+
+# Compression / restore
+rustvac compress [--older-than 2d] [--dry-run] [--yes]
+rustvac restore <slug> [--into PATH]
+rustvac archive list | rm <slug>
+
+# Launch GUI
+rustvac gui
+
+measure defaults to depth-3 and top-20 so it doesn't dump your entire filesystem to stdout. --full disables that.
+--dry-run is the default posture for compress; --yes skips the prompt for scripting. --json makes it pipeable into jq and shell one-liners.
+Guardrail: refuse to run against /, $HOME, or a drive root without --force. This tool deletes things; make the footgun hard to pull.
+10. Configuration
+~/.config/rustvac/config.toml
+
+roots = ["~/Code", "~/side-projects"]
+older_than_days = 2
+archive_dir = "~/.rustvac/archive"
+format = "tar.zst"
+exclude = ["**/vendor/**", "**/node_modules/**"]
+keep = ["~/Code/the-one-project-that-takes-40-minutes-to-build"]
+busy_grace_seconds = 60
+
+11. Milestones
+Deliverable
+Definition of done
+M0
+Workspace + renamed crates
+cargo build clean, all three crates prefixed tpt-rustvac-
+M1
+Core scan (Rust targets) + rustvac scan
+Correct sizes on fixtures, parallel, streams events
+M2
+General measurement + rustvac measure
+Hardlink dedup, depth limits, top-N, works on / and C:\
+M3
+rustvac-gui tree with mode toggle
+60fps during scan, both modes render correctly
+M4
+Compress + restore
+Round-trip 5 GiB fixture, verify, trash safely
+M5
+Config, badges, packaging
+cargo-dist binaries for mac/win/linux
+Start with M0 and M1. Get the workspace compiling, then prove the Rust-target scanner works end-to-end before adding general measurement. Don't let the scope creep delay the first working binary.
+12. Tech Stack Summary
+Core (tpt-rustvac-core):
+walkdir / ignore — filesystem traversal
+rayon — parallel iteration
+zstd — compression
+tar — archive format
+trash — safe deletion
+serde + toml — config
+CLI (tpt-rustvac-cli):
+clap — argument parsing
+tabled — pretty terminal tables
+GUI (tpt-rustvac-gui):
+egui + eframe — native immediate-mode UI
+rfd — native file dialogs

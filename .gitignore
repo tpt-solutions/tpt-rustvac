@@ -1,0 +1,13 @@
+# Build output
+/target/
+
+# Local archives and test scratch
+/fixtures/generated/
+/.rustvac/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store

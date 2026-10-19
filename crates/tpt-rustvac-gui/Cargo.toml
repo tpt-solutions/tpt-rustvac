@@ -1,0 +1,18 @@
+[package]
+name = "tpt-rustvac-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[dependencies]
+chrono = "0.4.45"
+tpt-rustvac-core = { version = "0.1.0", path = "../tpt-rustvac-core" }
+webview = "0.1.1"
+
+[[bin]]
+name = "rustvac-gui"
+path = "src/main.rs"
