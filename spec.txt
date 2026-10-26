@@ -29,7 +29,7 @@ tpt-rustvac/
 ├── crates/
 │   ├── tpt-rustvac-core/         # scan, measure, compress, restore  ← zero UI
 │   ├── tpt-rustvac-cli/          # binary: rustvac
-│   └── tpt-rustvac-gui/          # binary: rustvac-gui  (egui / eframe)
+│   └── tpt-rustvac-gui/          # binary: rustvac-gui  (tpt-shell web UI; see todo.md Phase 8)
 ├── fixtures/                     # fake projects for tests
 └── README.md
 
@@ -154,8 +154,8 @@ Age shows unknown, never blocks
 Scan interrupted
 State::Failed on the subtree, root still usable
 Hardlink handling is the one people forget. If you scan ~/ and someone has hardlinked a 5 GB database in three places, a naive scanner reports 15 GB. Track inodes.
-7. GUI Design (egui + eframe)
-CollapsingHeader is the tree — no third-party tree widget needed. Put the metadata inside the header using a right-to-left layout so columns stay aligned.
+7. GUI Design (tpt-shell web UI)
+The window is hosted by tpt-shell and drawn with HTML, CSS and JS in crates/tpt-rustvac-gui/web. The page polls the app through commands (state.get and others) in commands.rs; the app holds all state. The tree is a flat list of visible rows with the metadata in columns, so the columns stay aligned. The earlier egui-based design notes below describe the same layout.
 
 ┌────────────────────────────────────────────────────────────────────┐
 │ tpt-rustvac   [ 🦀 Rust Targets ▾ ]  [ ~/Code ▼ ]  [ ⟳ ]  🔍       │
@@ -278,5 +278,5 @@ CLI (tpt-rustvac-cli):
 clap — argument parsing
 tabled — pretty terminal tables
 GUI (tpt-rustvac-gui):
-egui + eframe — native immediate-mode UI
-rfd — native file dialogs
+tpt-shell — webview app shell (WebView2 on Windows); the GUI page is HTML/CSS/JS
+rfd — native file dialogs (not used by the tpt-shell GUI yet; see todo.md Phase 8)

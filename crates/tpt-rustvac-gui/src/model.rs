@@ -1,5 +1,5 @@
-//! GUI state and logic. Nothing in here touches FLTK, so it can be read and reasoned
-//! about on its own. The window code lives in `main.rs` and `tree.rs`.
+//! GUI state and logic, independent of the window. The page reads it through the commands in
+//! `commands.rs`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -25,26 +25,10 @@ pub enum Mode {
     Mixed,
 }
 
-impl Mode {
-    pub const ALL: [Mode; 3] = [Mode::RustTargets, Mode::AnyFolder, Mode::Mixed];
-
-    pub fn index(self) -> i32 {
-        Mode::ALL.iter().position(|m| *m == self).unwrap_or(0) as i32
-    }
-
-    pub fn from_index(i: i32) -> Mode {
-        Mode::ALL
-            .get(i.max(0) as usize)
-            .copied()
-            .unwrap_or(Mode::RustTargets)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionKind {
     Compress,
     Trash,
-    DeletePermanently,
 }
 
 #[derive(Debug, Clone)]
@@ -458,9 +442,6 @@ impl Model {
                         ActionKind::Trash => safety::move_to_trash(&item.path)
                             .map(|_| "moved to trash".to_string())
                             .map_err(|e| e.to_string()),
-                        ActionKind::DeletePermanently => safety::delete_permanently(&item.path)
-                            .map(|_| "deleted".to_string())
-                            .map_err(|e| e.to_string()),
                     };
                     if tx
                         .send(WorkMsg::Item {
@@ -536,19 +517,4 @@ impl Model {
 
 pub fn is_rust_target(node: &Node) -> bool {
     node.kind == Kind::Target || node.is_target
-}
-
-pub fn human(bytes: u64) -> String {
-    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < units.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", units[unit])
-    }
 }

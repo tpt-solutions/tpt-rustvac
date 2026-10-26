@@ -10,8 +10,10 @@ readme.workspace = true
 
 [dependencies]
 chrono = "0.4.45"
+serde_json = "1"
 tpt-rustvac-core = { version = "0.1.0", path = "../tpt-rustvac-core" }
-webview = "0.1.1"
+# The window shell, from the sibling tpt-shell checkout. Pre-alpha; see todo.md Phase 8.
+tpt-shell = { version = "0.0.0", path = "../../../tpt-shell/crates/tpt-shell" }
 
 [[bin]]
 name = "rustvac-gui"

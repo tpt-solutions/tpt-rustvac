@@ -17,9 +17,7 @@ targets = [
 [advisories]
 version = 2
 ignore = []
-# Unmaintained-crate notices are reported for direct dependencies only. The one
-# current finding, ttf-parser, reaches the build through fltk (font handling). It
-# is unmaintained, not vulnerable. Track it when fltk moves off it. Vulnerability
+# Unmaintained-crate notices are reported for direct dependencies only. Vulnerability
 # advisories are still checked for the whole tree.
 unmaintained = "workspace"
 

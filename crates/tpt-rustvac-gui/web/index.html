@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tpt-rustvac</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="modes" role="group" aria-label="Scan mode">
+      <button type="button" data-mode="rust">Rust Targets</button>
+      <button type="button" data-mode="any">Any Folder</button>
+      <button type="button" data-mode="mixed">Mixed</button>
+    </div>
+    <form id="root-form" class="root">
+      <input id="root" type="text" list="roots" spellcheck="false" aria-label="Folder to scan">
+      <datalist id="roots"></datalist>
+      <button type="submit">Scan</button>
+    </form>
+    <input id="search" type="search" placeholder="Search projects  ( / )" aria-label="Search">
+    <div class="filters">
+      <label>Min age <input id="min-age" type="number" min="0" step="1" value="0"> days</label>
+      <label>Min size <input id="min-size" type="number" min="0" step="1" value="0"> MB</label>
+      <label class="check"><input id="hide-archived" type="checkbox"> Hide archived</label>
+      <button type="button" id="sort" title="Toggle size sort  ( s )">Size ↓</button>
+    </div>
+  </header>
+
+  <div id="notice" class="notice" hidden></div>
+
+  <main class="panes">
+    <section class="tree-pane" aria-label="Folders">
+      <div class="tree-head">
+        <span></span><span></span><span>Name</span><span class="num">Size</span><span></span><span class="num">Age</span>
+      </div>
+      <div id="tree" class="tree" role="tree" tabindex="0"></div>
+      <p id="empty" class="empty" hidden></p>
+    </section>
+
+    <aside class="details" aria-label="Details">
+      <h2>Details</h2>
+      <div id="details-body">
+        <p class="muted">Select a folder to see its details.</p>
+      </div>
+      <div class="actions">
+        <button type="button" id="act-compress">Compress</button>
+        <button type="button" id="act-trash" class="danger">Move to Trash</button>
+        <button type="button" id="act-reveal">Reveal</button>
+        <button type="button" id="act-copy">Copy path</button>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status">Starting…</span>
+    <span class="grow"></span>
+    <span id="stat-targets"></span>
+    <span id="stat-reclaim"></span>
+    <span id="stat-last"></span>
+    <details id="failures" class="failures" hidden>
+      <summary id="failure-count"></summary>
+      <ul id="failure-list"></ul>
+    </details>
+  </footer>
+
+  <ul id="menu" class="menu" role="menu" hidden>
+    <li role="menuitem" data-action="compress">Compress</li>
+    <li role="menuitem" data-action="trash">Move to Trash</li>
+    <li role="menuitem" data-action="reveal">Reveal</li>
+    <li role="menuitem" data-action="copy">Copy path</li>
+  </ul>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2 id="confirm-title">Confirm</h2>
+      <p id="confirm-summary"></p>
+      <ul id="confirm-list" class="confirm-list"></ul>
+      <p id="confirm-note" class="muted" hidden></p>
+      <div class="dialog-buttons">
+        <button type="button" id="confirm-cancel">Cancel</button>
+        <button type="button" id="confirm-ok" class="primary">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

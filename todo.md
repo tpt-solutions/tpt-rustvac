@@ -144,6 +144,43 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 - [x] `cargo deny check` passes (licence and advisory checks) *(note: all four checks pass. GUI moved to FLTK (MIT); see the decisions section. The one advisory notice (ttf-parser, via fltk) is documented in deny.toml.)*
 - [x] Every permission-denied and failed path is shown in the UI or CLI output, never silently dropped
 
+## Phase 8 — GUI on tpt-shell (in progress, Windows)
+
+The GUI (`crates/tpt-rustvac-gui`) is a web UI hosted by [tpt-shell](../tpt-shell/README.md), a sibling checkout at `d:\Programming\1PRODUCTION\Open Source\tpt-shell`. The core library and CLI are unchanged. tpt-shell is pre-alpha; its Windows (WebView2) backend is the only one verified to open windows.
+
+**Correction to the earlier notes:** the GUI was never FLTK in the build. `main.rs` was a `webview` crate stub, and `tree.rs` and `dialogs.rs` were not compiled. Those two files and the `webview` dependency are removed now.
+
+### Decisions
+- [x] Windows first. macOS and Linux wait until tpt-shell's backends pass its conformance suite.
+- [x] Dependency: path dependency on the sibling checkout. tpt-shell is not published. It is pinned with a version because the `bans` rule denies wildcard dependencies.
+- [x] Progress is polled, not pushed. tpt-shell events are not queued, so a page that misses one never recovers. The page calls `state.get` every 250 ms while busy, and the app advances the scan and work threads on each call.
+- [x] Scan trees are sent as a flat list of visible rows, capped at 5,000 rows with a notice when trimmed.
+- [x] Grants use `Scope::Unrestricted` for `fs.read` and `fs.write`, because the page is the app's own UI and the user picks any folder in Any Folder mode. tpt-shell's consent prompt is not used.
+
+### Built
+- [x] `commands.rs`: `state.get`, `scan.start`, `view.set`, `node.expand`, `node.select`, `node.check`, `node.check_all`, `action.prepare`, `action.run`, `path.reveal`. Each names a capability that the window's grants allow.
+- [x] `web/`: toolbar (mode, folder, scan, search, filters, sort), tree with checkboxes, expanders, size bars and age colours, details pane, status bar with failures, context menu, and a confirmation dialog listing exact paths and bytes, with the action as the primary button.
+- [x] Keyboard: `/` search, `s` sort, Space check, Enter expand, arrow keys move, Ctrl/Cmd+A check all, Escape closes the menu.
+- [x] `cargo build`, `cargo clippy -D warnings` and `cargo fmt --check` pass for `tpt-rustvac-gui`.
+- [x] `cargo deny check` passes (advisories, bans, licences, sources). Duplicate-version lines are warnings only.
+- [x] Window opens on Windows and the page renders. Checked with screenshots against a generated fixture tree (4 projects, all shown with sizes, bars and expanders).
+- [x] Permission-denied and failed paths show in the status bar with a list.
+
+### Not yet verified
+- [x] Action commands, run through the real handlers against scratch fixtures: `action.prepare` lists the target, `action.run` compresses it (archive written, original removed), `action.run` moves another to trash, and an empty selection is refused with `RUSTVAC_NOTHING_TO_DO`. This was a temporary test, now removed. It ran against an explicit scratch root and archive folder, and refused to run otherwise.
+- [ ] The page side of actions in the live window: the confirmation dialog, reveal, copy path, and the context menu. Those are click paths, not yet driven on screen.
+- [ ] Keyboard shortcuts and checkbox behaviour in the live window.
+- [ ] Frame rate and responsiveness on a large tree. The Phase 2 target has never been measured either.
+- [ ] Mixed mode badges and Any Folder layout, on screen.
+- [ ] Verify on Windows and record the result here. Phase 4's screenshot check is covered by the fixture screenshots above, not by the rest of this list.
+
+### Open items
+- [ ] Ship `WebView2Loader.dll` next to `rustvac-gui.exe`. The app looks for it beside the binary, or at `RUSTVAC_WEBVIEW2_LOADER`. Its licence is BSD-3-Clause, so its text must go in the release notices. The x64 file from `Microsoft.Web.WebView2 1.0.4312-prerelease` has SHA-256 `909828eb2922694b156ae367751466722fe148a1b151245bbc8a80a24dc32645`, which matches the tpt-shell notice. cargo-dist does not copy it yet.
+- [ ] Folder picker. The root is typed in, or taken from `roots` in the config. The native picker from Phase 4 is not restored.
+- [ ] Restore from the GUI. The Phase 4 list did not include it, so it is not built.
+- [ ] Remove `chrono` from the GUI crate if the last-scan time moves to JS.
+- [ ] Update Phase 4 and Phase 7 notes that mention FLTK. They describe a window that was never built.
+
 ## Out of scope for v1 (do not schedule)
 
 - Dependency deduplication
