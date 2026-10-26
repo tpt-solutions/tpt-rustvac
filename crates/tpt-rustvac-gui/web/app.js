@@ -140,13 +140,17 @@
   function showNotice() {
     const parts = [problem];
     if (state && state.configError) parts.push(`Config: ${state.configError}`);
+    if (state && state.rootIsProject && state.mode === "rust" && !state.scanning && state.targets === 0) {
+      parts.push("This folder is a project. Scans look for projects inside a folder, so choose the folder that holds it.");
+    }
     if (state && state.rowsTruncated) {
       parts.push("Showing the first rows only. Narrow the search to see the rest.");
     }
     const text = parts.filter(Boolean).join(" · ");
     els.notice.hidden = !text;
     els.notice.textContent = text;
-    els.notice.classList.toggle("error", problemIsError || !!(state && state.configError));
+    const isError = (!!problem && problemIsError) || !!(state && state.configError);
+    els.notice.classList.toggle("error", isError);
   }
 
   // ---- drawing ------------------------------------------------------------------------

@@ -103,11 +103,13 @@ impl Model {
             },
             None => (Config::default(), None),
         };
-        let root = config
-            .root_paths()
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| PathBuf::from("."));
+        let root = native_separators(
+            config
+                .root_paths()
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| PathBuf::from(".")),
+        );
         Model {
             config,
             config_error,
@@ -509,6 +511,19 @@ impl Model {
         self.last_scan
             .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
             .map(|d| d.as_millis() as u64)
+    }
+}
+
+/// The config may write Windows paths with `/`. Scan paths use `\` there, so every row
+/// shows one style.
+fn native_separators(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(path.to_string_lossy().replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        path
     }
 }
 

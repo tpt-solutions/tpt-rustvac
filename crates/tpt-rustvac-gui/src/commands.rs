@@ -219,6 +219,7 @@ fn snapshot(m: &Model) -> Value {
     json!({
         "mode": mode_name(m.mode),
         "root": m.root.display().to_string(),
+        "rootIsProject": m.root.join("Cargo.toml").is_file(),
         "query": m.query,
         "minAgeDays": m.min_age_days,
         "minSizeMb": m.min_size_mb,

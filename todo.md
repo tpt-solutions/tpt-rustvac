@@ -46,7 +46,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 ### Scanning
 - [x] Walk with `ignore::WalkBuilder` (`git_ignore(false)`, `hidden(false)`, `follow_links(false)`) *(note: project discovery is serial with pruning; sizing uses the parallel walker)*
 - [x] Parallelise across projects with rayon, and within a project with `WalkParallel`
-- [ ] Compute aggregate size in one pass; build child nodes lazily *(note: NOT complete: aggregates are computed in one pass, but child nodes are built only one level under target/ (debug/, release/). Deeper levels are not built lazily yet.)*
+- [ ] Compute aggregate size in one pass; build child nodes lazily *(note: decided 2026-10-27: aggregates are one pass, and child nodes stop one level under target/ (debug/, release/). That already bounds the arena, so the lazy part is deferred to a later version. It needs an expand-on-demand scan path, which is a feature of its own. Revisit if memory is a problem on real trees.)*
 - [x] Stream `ScanEvent::{Discovered, Progress, NodeDone, Failed}` over `mpsc`
 - [x] Age = newest file mtime inside `target/` (never atime). Unknown mtime shows "unknown" and does not block
 - [x] Busy guard: any file modified within `busy_grace_seconds` (default 60) marks the target `Busy`
@@ -67,7 +67,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 ### Verification
 - [x] Fixture generator creates fake projects (workspace and single-crate, with and without `CARGO_TARGET_DIR`)
 - [x] Tests assert correct sizes, file counts and ages on fixtures
-- [ ] Performance check: 40 projects / ~200 GiB in under 10 s on SSD, with the UI at 60 fps *(note: NOT measured. Needs a real ~200 GiB tree to check honestly.)*
+- [ ] Performance check: 40 projects / ~200 GiB in under 10 s on SSD, with the UI at 60 fps *(note: NOT measured at full size. Scaled run, 2026-10-27, Windows, release build: 40 projects, 60,000 files, 937 MiB. `rustvac scan` took 1.3 s warm (2.0 s cold) and found all 40 projects. The 200 GiB run needs a drive with about 250 GiB free. This machine has 12 GB free on D: and 7 GB on C:. The 60 fps check is not measured.)*
 
 ## Phase 3 — M2: General measurement and `rustvac measure`
 
@@ -125,7 +125,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 
 ### Verification
 - [x] Round-trip a 5 GiB fixture: compress, verify, restore, and confirm the content matches *(note: pack, verify and restore passed; every byte identical. Input was random data, so the archive is slightly larger than the input (5,368,833,882 vs 5,368,709,120 bytes). The trash step was not part of this test; it was verified on fixtures.)*
-- [ ] Confirm the trash removal is recoverable on all three OSes *(note: verified on Windows only)*
+- [ ] Confirm the trash removal is recoverable on all three OSes *(note: Windows checked by hand against the Recycle Bin. Linux is checked by `tests/trash_unix.rs`, which trashes a target, lists it and restores it. It passes in WSL Ubuntu 24.04. macOS is not checked: the `trash` crate has no listing API there.)*
 
 ## Phase 6 — M5: Config, badges, packaging
 
@@ -177,13 +177,13 @@ The GUI (`crates/tpt-rustvac-gui`) is a web UI hosted by [tpt-shell](../tpt-shel
 ### Open items
 - [ ] Ship `WebView2Loader.dll` next to `rustvac-gui.exe`. The app looks for it beside the binary, or at `RUSTVAC_WEBVIEW2_LOADER`. Its licence is BSD-3-Clause, so its text must go in the release notices. The x64 file from `Microsoft.Web.WebView2 1.0.4312-prerelease` has SHA-256 `909828eb2922694b156ae367751466722fe148a1b151245bbc8a80a24dc32645`, which matches the tpt-shell notice. cargo-dist does not copy it yet. Deferred: packaging waits until the rest of this list is done.
 - [x] Folder picker *(note: Browse… opens the native folder dialog through `rfd`, Windows only. Choosing a folder rescans it. The `rfd` default features are off, because the Linux backend pulls in an ISC-licensed crate that the policy does not allow.)*
-- [ ] Restore from the GUI. Not built. The Phase 5 GUI action list does not include restore, so it is not in v1. Restore stays in the CLI. Say if you want it added.
+- [x] Restore from the GUI. Decided: out of v1. The Phase 5 GUI action list does not include restore, so restore stays in the CLI (`rustvac restore`). Add it in a later version if needed.
 - [x] Remove `chrono` from the GUI crate *(note: the last-scan time is sent as epoch milliseconds and formatted in the page.)*
 - [x] Update Phase 4 and Phase 7 notes that mention FLTK *(note: the Phase 8 header has the correction. The FLTK lines in Phases 4 and 7 are left as history.)*
 
 ### New items from the live check
-- [ ] A scan root that is itself a project (it has `Cargo.toml` and `target/`) shows 0 targets, because the scanner looks for projects inside the root. Picking a project folder with Browse… therefore shows nothing. Decide whether the root should count as a project too.
-- [ ] Paths from a config root use forward slashes (`C:/...`), and the children use backslashes. Cosmetic. Normalise the root when it is set.
+- [x] A scan root that is itself a project shows 0 targets. Decided: the scanner keeps its rule that a root holds projects. When the root has a `Cargo.toml` and the Rust Targets scan finds nothing, the page now says so and asks for the folder above the project. Verified on screen.
+- [x] Paths from a config root used forward slashes, and the children used backslashes. The root is now normalised on Windows.
 
 ## Out of scope for v1 (do not schedule)
 
