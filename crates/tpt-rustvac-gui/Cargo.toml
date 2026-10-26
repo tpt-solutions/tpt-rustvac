@@ -12,8 +12,9 @@ readme.workspace = true
 chrono = "0.4.45"
 serde_json = "1"
 tpt-rustvac-core = { version = "0.1.0", path = "../tpt-rustvac-core" }
-# The window shell, from the sibling tpt-shell checkout. Pre-alpha; see todo.md Phase 8.
-tpt-shell = { version = "0.0.0", path = "../../../tpt-shell/crates/tpt-shell" }
+# The window shell. Pinned to a commit so CI and every checkout build the same code.
+# Pre-alpha; see todo.md Phase 8. Move the rev when tpt-shell changes.
+tpt-shell = { version = "0.0.0", git = "https://github.com/tpt-solutions/tpt-shell", rev = "4f798a523d09f88965892fdaff9972e9176688b0" }
 
 [[bin]]
 name = "rustvac-gui"

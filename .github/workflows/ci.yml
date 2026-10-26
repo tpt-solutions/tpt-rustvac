@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# The GUI (tpt-rustvac-gui) builds on Windows only. tpt-shell does not compile on Linux or
+# macOS at the pinned commit, so those jobs leave the GUI out.
+jobs:
+  test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            scope: --workspace
+          - os: ubuntu-22.04
+            scope: --workspace --exclude tpt-rustvac-gui
+          - os: macos-latest
+            scope: --workspace --exclude tpt-rustvac-gui
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build ${{ matrix.scope }}
+      - name: Test
+        run: cargo test ${{ matrix.scope }}
+
+  lint:
+    name: Format and clippy (Ubuntu)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --exclude tpt-rustvac-gui --all-targets -- -D warnings
+
+  policy:
+    name: Licence and advisory policy (cargo-deny)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
