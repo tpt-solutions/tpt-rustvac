@@ -504,14 +504,11 @@ impl Model {
         }
     }
 
-    pub fn last_scan_text(&self) -> String {
-        match self.last_scan {
-            Some(t) => {
-                let local: chrono::DateTime<chrono::Local> = t.into();
-                local.format("%H:%M:%S").to_string()
-            }
-            None => "—".into(),
-        }
+    /// When the last scan finished, as milliseconds since the Unix epoch. The page formats it.
+    pub fn last_scan_millis(&self) -> Option<u64> {
+        self.last_scan
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
     }
 }
 

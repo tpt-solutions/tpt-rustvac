@@ -182,6 +182,9 @@ input[type="number"] {
   padding: 6px 12px;
   background: var(--badge);
   border-bottom: 1px solid var(--line);
+}
+
+.notice.error {
   color: var(--danger);
 }
 

@@ -22,56 +22,62 @@ const MAX_FAILURES: usize = 50;
 
 /// Registers every command the page may call.
 pub fn register(app: App, model: &Shared) -> App {
-    app.command("state.get", "fs.read", no_target, handler(model, state_get))
-        .command(
-            "scan.start",
-            "fs.read",
-            root_target,
-            handler(model, scan_start),
-        )
-        .command("view.set", "fs.read", no_target, handler(model, view_set))
-        .command(
-            "node.expand",
-            "fs.read",
-            no_target,
-            handler(model, node_expand),
-        )
-        .command(
-            "node.select",
-            "fs.read",
-            no_target,
-            handler(model, node_select),
-        )
-        .command(
-            "node.check",
-            "fs.read",
-            no_target,
-            handler(model, node_check),
-        )
-        .command(
-            "node.check_all",
-            "fs.read",
-            no_target,
-            handler(model, node_check_all),
-        )
-        .command(
-            "action.prepare",
-            "fs.read",
-            no_target,
-            handler(model, action_prepare),
-        )
-        .command(
-            "action.run",
-            "fs.write",
-            no_target,
-            handler(model, action_run),
-        )
-        .command(
-            "path.reveal",
-            "fs.read",
-            path_target,
-            handler(model, path_reveal),
-        )
+    app.command(
+        "dialog.pick_folder",
+        "fs.read",
+        no_target,
+        dialog_pick_folder,
+    )
+    .command("state.get", "fs.read", no_target, handler(model, state_get))
+    .command(
+        "scan.start",
+        "fs.read",
+        root_target,
+        handler(model, scan_start),
+    )
+    .command("view.set", "fs.read", no_target, handler(model, view_set))
+    .command(
+        "node.expand",
+        "fs.read",
+        no_target,
+        handler(model, node_expand),
+    )
+    .command(
+        "node.select",
+        "fs.read",
+        no_target,
+        handler(model, node_select),
+    )
+    .command(
+        "node.check",
+        "fs.read",
+        no_target,
+        handler(model, node_check),
+    )
+    .command(
+        "node.check_all",
+        "fs.read",
+        no_target,
+        handler(model, node_check_all),
+    )
+    .command(
+        "action.prepare",
+        "fs.read",
+        no_target,
+        handler(model, action_prepare),
+    )
+    .command(
+        "action.run",
+        "fs.write",
+        no_target,
+        handler(model, action_run),
+    )
+    .command(
+        "path.reveal",
+        "fs.read",
+        path_target,
+        handler(model, path_reveal),
+    )
 }
 
 /// Wraps a command body so it runs with the state locked.
@@ -222,7 +228,7 @@ fn snapshot(m: &Model) -> Value {
         "progress": { "done": m.progress.0, "total": m.progress.1 },
         "working": m.is_busy_working(),
         "status": m.status,
-        "lastScan": m.last_scan_text(),
+        "lastScan": m.last_scan_millis(),
         "targets": m.target_count(),
         "reclaimable": m.reclaimable_bytes(),
         "failures": failures,
@@ -380,6 +386,33 @@ fn action_run(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
 
 fn item_json(item: &Item) -> Value {
     json!({ "path": item.path.display().to_string(), "bytes": item.bytes })
+}
+
+/// Asks for a folder with the native dialog, starting in `start` when that is a folder.
+/// Returns the chosen path, or `null` when the user cancels.
+fn dialog_pick_folder(args: &Value) -> Result<Value, CommandError> {
+    let start = args["start"]
+        .as_str()
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_dir());
+    Ok(json!(pick_folder(start)?.map(|p| p.display().to_string())))
+}
+
+#[cfg(windows)]
+fn pick_folder(start: Option<PathBuf>) -> Result<Option<PathBuf>, CommandError> {
+    let mut dialog = rfd::FileDialog::new().set_title("Choose a folder to scan");
+    if let Some(dir) = start {
+        dialog = dialog.set_directory(dir);
+    }
+    Ok(dialog.pick_folder())
+}
+
+#[cfg(not(windows))]
+fn pick_folder(_: Option<PathBuf>) -> Result<Option<PathBuf>, CommandError> {
+    Err(CommandError::new(
+        "RUSTVAC_UNSUPPORTED",
+        "the folder picker is only built for Windows so far",
+    ))
 }
 
 /// Opens Explorer with the item selected. Only paths that are in the scan are accepted.

@@ -46,6 +46,7 @@
   let searchTimer = 0;
   // The message from the last action or error, shown in the notice bar.
   let problem = "";
+  let problemIsError = true;
 
   // ---- talking to the app -------------------------------------------------------------
 
@@ -128,8 +129,10 @@
   }
 
   // Sets the message from the last action. It stays until the next action replaces it.
-  function notice(text) {
+  // Errors are drawn in the danger colour; confirmations are not.
+  function notice(text, isError = true) {
     problem = text || "";
+    problemIsError = isError;
     showNotice();
   }
 
@@ -143,6 +146,7 @@
     const text = parts.filter(Boolean).join(" · ");
     els.notice.hidden = !text;
     els.notice.textContent = text;
+    els.notice.classList.toggle("error", problemIsError || !!(state && state.configError));
   }
 
   // ---- drawing ------------------------------------------------------------------------
@@ -266,7 +270,10 @@
     els.status.textContent = text;
     els.targets.textContent = `${state.targets} targets`;
     els.reclaim.textContent = `Reclaimable ${human(state.reclaimable)}`;
-    els.last.textContent = `Last scan ${state.lastScan}`;
+    els.last.textContent =
+      state.lastScan === null
+        ? "No scan yet"
+        : `Last scan ${new Date(state.lastScan).toLocaleTimeString()}`;
 
     els.failures.hidden = state.failureCount === 0;
     els.failureCount.textContent = `${state.failureCount} failed`;
@@ -349,7 +356,7 @@
       document.execCommand("copy");
       field.remove();
     }
-    notice(`Copied ${path}`);
+    notice(`Copied ${path}`, false);
   }
 
   function selectedNode() {
@@ -388,6 +395,14 @@
       send("scan.start", { mode: button.dataset.mode, root: state.root });
     });
   }
+
+  $("browse").addEventListener("click", async () => {
+    const picked = await call("dialog.pick_folder", { start: state.root }).catch((error) => {
+      notice(describe(error));
+      return null;
+    });
+    if (picked) send("scan.start", { mode: state.mode, root: picked });
+  });
 
   els.rootForm.addEventListener("submit", (event) => {
     event.preventDefault();

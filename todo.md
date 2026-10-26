@@ -15,7 +15,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 - [x] Initialise git repository and `.gitignore` (`target/`, archives, local config)
 - [x] Add `LICENSE-MIT` and `LICENSE-APACHE` at repo root (copyright: TPT Solutions, 2026)
 - [x] Set `license = "MIT OR Apache-2.0"` in workspace package metadata
-- [x] Add `cargo-deny` config that allows MIT and dual MIT/Apache-2.0, and denies Apache-2.0-only *(note: deny.toml written. `cargo deny check licenses` currently FAILS on two Apache-2.0-only crates pulled in by the GUI (winit 0.30, owned_ttf_parser). See the open question in the summary.)*
+- [x] Add `cargo-deny` config that allows MIT and dual MIT/Apache-2.0, and denies Apache-2.0-only *(note: deny.toml written. The Apache-only crates that failed here (winit, owned_ttf_parser) came from the old GUI and are gone. `cargo deny check` passes.)*
 - [x] Audit licences of `zstd-sys` bundled libzstd (BSD-style / GPLv2 dual) and document the result *(note: bundled libzstd is BSD-3-Clause (its LICENSE) or GPL-2.0 (COPYING); BSD option used)*
 - [x] Choose edition and MSRV, and record them in the workspace manifest *(note: edition 2021, rust-version 1.85 recorded; not verified with a 1.85 toolchain)*
 - [x] Draft `README.md` (tagline, install, usage, licence section)
@@ -28,7 +28,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 - [x] Create `crates/tpt-rustvac-cli` with binary name `rustvac`
 - [x] Create `crates/tpt-rustvac-gui` with binary name `rustvac-gui`
 - [x] Create `fixtures/` directory
-- [ ] `cargo build` is clean on Windows, macOS and Linux *(note: Windows verified. macOS and Linux have not been built from here.)*
+- [x] `cargo build` is clean on Windows, macOS and Linux *(note: CI run 40372508268 builds core and the CLI on all three. The GUI builds on Windows only, because tpt-shell does not build on Linux or macOS yet.)*
 - [x] `cargo fmt --check` and `cargo clippy` pass with no warnings
 
 ## Phase 2 — M1: Core scan (Rust targets) and `rustvac scan`
@@ -140,7 +140,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 ## Phase 7 — Cross-cutting (ongoing from Phase 1)
 
 - [x] Unit tests for core logic
-- [ ] Integration tests against fixtures on all three OSes *(note: Windows only so far)*
+- [x] Integration tests against fixtures on all three OSes *(note: CI run 40372508268 runs `cargo test` for core and the CLI on Windows, Ubuntu and macOS. The GUI has no integration tests yet.)*
 - [x] `cargo deny check` passes (licence and advisory checks) *(note: all four checks pass. GUI moved to FLTK (MIT); see the decisions section. The one advisory notice (ttf-parser, via fltk) is documented in deny.toml.)*
 - [x] Every permission-denied and failed path is shown in the UI or CLI output, never silently dropped
 
@@ -168,18 +168,22 @@ The GUI (`crates/tpt-rustvac-gui`) is a web UI hosted by [tpt-shell](../tpt-shel
 
 ### Not yet verified
 - [x] Action commands, run through the real handlers against scratch fixtures: `action.prepare` lists the target, `action.run` compresses it (archive written, original removed), `action.run` moves another to trash, and an empty selection is refused with `RUSTVAC_NOTHING_TO_DO`. This was a temporary test, now removed. It ran against an explicit scratch root and archive folder, and refused to run otherwise.
-- [ ] The page side of actions in the live window: the confirmation dialog, reveal, copy path, and the context menu. Those are click paths, not yet driven on screen.
-- [ ] Keyboard shortcuts and checkbox behaviour in the live window.
-- [ ] Frame rate and responsiveness on a large tree. The Phase 2 target has never been measured either.
-- [ ] Mixed mode badges and Any Folder layout, on screen.
-- [ ] Verify on Windows and record the result here. Phase 4's screenshot check is covered by the fixture screenshots above, not by the rest of this list.
+- [x] Page side of actions in the live window, driven by mouse on fixtures *(note: the confirmation dialog lists exact paths and bytes. Move to Trash removed the target from disk, and the tree rescanned. Copy path put the path on the clipboard. Reveal runs `explorer /select`, which opens the folder with the item selected. Context menu opens at the pointer.)*
+- [x] Keyboard shortcuts and checkbox behaviour in the live window *(note: Space checks the selected row, `s` flips the sort, Ctrl+A checks every target. `/` and the arrow keys are not driven yet.)*
+- [ ] Frame rate and responsiveness on a large tree. Not measured. The Phase 2 target has never been measured either.
+- [x] Mixed mode badges and Any Folder layout, on screen *(note: Mixed puts `rust` badges on the Cargo targets. Any Folder has no badges, and its target count is 0.)*
+- [x] Verify on Windows and record the result here. The checks above were run on Windows against a generated fixture tree, with screenshots.
 
 ### Open items
-- [ ] Ship `WebView2Loader.dll` next to `rustvac-gui.exe`. The app looks for it beside the binary, or at `RUSTVAC_WEBVIEW2_LOADER`. Its licence is BSD-3-Clause, so its text must go in the release notices. The x64 file from `Microsoft.Web.WebView2 1.0.4312-prerelease` has SHA-256 `909828eb2922694b156ae367751466722fe148a1b151245bbc8a80a24dc32645`, which matches the tpt-shell notice. cargo-dist does not copy it yet.
-- [ ] Folder picker. The root is typed in, or taken from `roots` in the config. The native picker from Phase 4 is not restored.
-- [ ] Restore from the GUI. The Phase 4 list did not include it, so it is not built.
-- [ ] Remove `chrono` from the GUI crate if the last-scan time moves to JS.
-- [ ] Update Phase 4 and Phase 7 notes that mention FLTK. They describe a window that was never built.
+- [ ] Ship `WebView2Loader.dll` next to `rustvac-gui.exe`. The app looks for it beside the binary, or at `RUSTVAC_WEBVIEW2_LOADER`. Its licence is BSD-3-Clause, so its text must go in the release notices. The x64 file from `Microsoft.Web.WebView2 1.0.4312-prerelease` has SHA-256 `909828eb2922694b156ae367751466722fe148a1b151245bbc8a80a24dc32645`, which matches the tpt-shell notice. cargo-dist does not copy it yet. Deferred: packaging waits until the rest of this list is done.
+- [x] Folder picker *(note: Browse… opens the native folder dialog through `rfd`, Windows only. Choosing a folder rescans it. The `rfd` default features are off, because the Linux backend pulls in an ISC-licensed crate that the policy does not allow.)*
+- [ ] Restore from the GUI. Not built. The Phase 5 GUI action list does not include restore, so it is not in v1. Restore stays in the CLI. Say if you want it added.
+- [x] Remove `chrono` from the GUI crate *(note: the last-scan time is sent as epoch milliseconds and formatted in the page.)*
+- [x] Update Phase 4 and Phase 7 notes that mention FLTK *(note: the Phase 8 header has the correction. The FLTK lines in Phases 4 and 7 are left as history.)*
+
+### New items from the live check
+- [ ] A scan root that is itself a project (it has `Cargo.toml` and `target/`) shows 0 targets, because the scanner looks for projects inside the root. Picking a project folder with Browse… therefore shows nothing. Decide whether the root should count as a project too.
+- [ ] Paths from a config root use forward slashes (`C:/...`), and the children use backslashes. Cosmetic. Normalise the root when it is set.
 
 ## Out of scope for v1 (do not schedule)
 
