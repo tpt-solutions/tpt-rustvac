@@ -67,7 +67,8 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 ### Verification
 - [x] Fixture generator creates fake projects (workspace and single-crate, with and without `CARGO_TARGET_DIR`)
 - [x] Tests assert correct sizes, file counts and ages on fixtures
-- [ ] Performance check: 40 projects / ~200 GiB in under 10 s on SSD, with the UI at 60 fps *(note: NOT measured at full size. Scaled run, 2026-10-27, Windows, release build: 40 projects, 60,000 files, 937 MiB. `rustvac scan` took 1.3 s warm (2.0 s cold) and found all 40 projects. The 200 GiB run needs a drive with about 250 GiB free. This machine has 12 GB free on D: and 7 GB on C:. The 60 fps check is not measured.)*
+- [x] Performance check: 40 projects / ~200 GiB in under 10 s on SSD *(note: 2026-10-27, Windows 11, release build, G: (Crucial P3 1 TB NVMe). 40 projects, 100,040 files, 195.3 GiB. `rustvac scan` found all 40 targets in 1.47 s right after the tree was written, and 0.25 s warm. The GUI finished the same scan and showed 40 targets and 195.3 GiB. A true cold-cache run needs a reboot, which I did not do. The tree is still on G:\rustvac-perf-200g, and I can delete it on request.)*
+- [ ] UI at 60 fps during a scan *(note: not measured. The GUI stayed responsive on the 200 GiB tree, but no frame-rate tool was run.)*
 
 ## Phase 3 — M2: General measurement and `rustvac measure`
 
@@ -78,7 +79,7 @@ Source of truth: [spec.txt](spec.txt). Phases follow the spec's milestones M0–
 - [x] `--cross-device` and `--exclude <glob>` (add the `glob` crate; check its licence)
 - [x] `--json` output
 - [x] Guardrail: refuse `/`, `$HOME` and drive roots unless `--force` is given
-- [ ] Works on `/` (Unix) and `C:\` (Windows) *(note: not run. The guardrail refuses both without --force, and a full C:\ walk was not attempted.)*
+- [ ] Works on `/` (Unix) and `C:\` (Windows) *(note: 2026-10-27, Windows. The guardrail refuses `G:\` without `--force`. With `--force`, `measure G:\` took 17 s over 249,000 files, and `measure C:\` took 230 s over 3.28 million files. Both finished. Access-denied paths are listed, not dropped. `/` is not run here. BUG, fixed on Windows: C:\ reported 1.7 TiB on a 487 GB drive. Most of it is OneDrive placeholders in `C:\Users\phill\ICB Construction` (1.1 TiB) and `OneDrive - ICB Construction` (272 GiB). A sample of 3,000 files there were all offline, reparse or sparse, so they take no disk space, but the tool counts their full logical size. See the Phase 8 open items.)*
 - [x] `rustvac measure <path>` wired into the CLI
 
 ## Phase 4 — M3: GUI tree with mode toggle
@@ -184,6 +185,9 @@ The GUI (`crates/tpt-rustvac-gui`) is a web UI hosted by [tpt-shell](../tpt-shel
 ### New items from the live check
 - [x] A scan root that is itself a project shows 0 targets. Decided: the scanner keeps its rule that a root holds projects. When the root has a `Cargo.toml` and the Rust Targets scan finds nothing, the page now says so and asks for the folder above the project. Verified on screen.
 - [x] Paths from a config root used forward slashes, and the children used backslashes. The root is now normalised on Windows.
+- [x] Sizes are on disk, on Windows *(note: decided and done. `identity::disk_bytes` uses `GetCompressedFileSizeW`. A cloud placeholder counts 0 bytes, and a compressed or sparse file counts its allocated size. Verified on `C:\Users\phill\ICB Construction`: 1.1 TiB before, 260 MiB after, with the same 417,885 files. Tests now take their expected sizes from the same function.)*
+- [ ] Sizes on Linux and macOS are still logical lengths. They should match Windows: allocated blocks (`blocks() * 512`). Changing them shifts the expected sizes in the tests, so it is a separate step. Also, the archive totals (`archive.rs`, `pack`) still use logical lengths.
+- [x] Trash and compress refuse sync-managed paths *(note: decided and done on Windows. A path is refused if it is under a OneDrive folder, or if it or any folder above it is a reparse point. That covers cloud sync folders, symlinks and junctions. The guard runs in `safety::move_to_trash`, in `archive::compress_and_vacuum`, and in the GUI's preview. Tested with a real junction in `tests/sync_guard.rs`. Linux and macOS have no such rule.)*
 
 ## Out of scope for v1 (do not schedule)
 

@@ -23,6 +23,8 @@
     reveal: $("act-reveal"),
     copy: $("act-copy"),
     status: $("status"),
+    progress: $("progress"),
+    progressFill: $("progress-fill"),
     targets: $("stat-targets"),
     reclaim: $("stat-reclaim"),
     last: $("stat-last"),
@@ -266,12 +268,19 @@
 
   function renderStatus() {
     let text = state.status;
+    const { done, total } = state.progress;
+    const known = state.scanning && total > 0;
     if (!text) {
       text = state.scanning
-        ? `Scanning ${state.progress.done}/${state.progress.total}`
+        ? known
+          ? `Scanning ${done}/${total} targets`
+          : "Scanning…"
         : "Ready";
     }
     els.status.textContent = text;
+    els.progress.hidden = !(state.scanning || state.working);
+    els.progress.classList.toggle("indeterminate", !known);
+    els.progressFill.style.width = known ? `${(done / total) * 100}%` : "";
     els.targets.textContent = `${state.targets} targets`;
     els.reclaim.textContent = `Reclaimable ${human(state.reclaimable)}`;
     els.last.textContent =

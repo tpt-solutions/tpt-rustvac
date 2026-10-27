@@ -295,6 +295,22 @@ input[type="number"] {
   background: var(--bar);
 }
 
+/* Footer progress. Determinate when the scan knows the total, otherwise a sweeping bar. */
+.progress {
+  width: 160px;
+  flex: none;
+}
+
+.progress.indeterminate i {
+  width: 30%;
+  animation: sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
 .age-dim {
   color: var(--age-dim);
 }

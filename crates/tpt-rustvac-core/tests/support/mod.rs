@@ -7,11 +7,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub fn write_file(path: &Path, size: usize) {
+use tpt_rustvac_core::identity::disk_bytes;
+
+/// Writes `size` bytes to `path`, and returns the bytes the file takes on disk. The scanner
+/// reports that number, so tests compare against it. On Windows it can be smaller than `size`
+/// (cloud placeholders, sparse files) or larger (cluster rounding for small files).
+pub fn write_file(path: &Path, size: usize) -> u64 {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
     fs::write(path, vec![b'x'; size]).unwrap();
+    disk_of(path)
+}
+
+/// The bytes an existing file takes on disk, as the scanner counts them.
+pub fn disk_of(path: &Path) -> u64 {
+    disk_bytes(path, &fs::metadata(path).unwrap())
 }
 
 /// Sizes the fixture tree was built with, so tests can compare exact totals.
@@ -35,20 +46,20 @@ pub fn build_rust_fixture(root: &Path) -> RustFixture {
 
     let api = root.join("api-server");
     write_file(&api.join("Cargo.toml"), 40);
-    write_file(&api.join("target/debug/deps/lib.rlib"), 4000);
-    write_file(&api.join("target/release/app"), 1000);
-    projects.push((api.clone(), api.join("target"), 5000, 2));
+    let api_bytes = write_file(&api.join("target/debug/deps/lib.rlib"), 4000)
+        + write_file(&api.join("target/release/app"), 1000);
+    projects.push((api.clone(), api.join("target"), api_bytes, 2));
 
     let web = root.join("web-app");
     write_file(&web.join("Cargo.toml"), 40);
-    write_file(&web.join("target/debug/app"), 2000);
-    projects.push((web.clone(), web.join("target"), 2000, 1));
+    let web_bytes = write_file(&web.join("target/debug/app"), 2000);
+    projects.push((web.clone(), web.join("target"), web_bytes, 1));
 
     let ws = root.join("workspace");
     write_file(&ws.join("Cargo.toml"), 60);
-    write_file(&ws.join("target/debug/ws.bin"), 700);
+    let ws_bytes = write_file(&ws.join("target/debug/ws.bin"), 700);
     write_file(&ws.join("crates/member/Cargo.toml"), 40);
-    projects.push((ws.clone(), ws.join("target"), 700, 1));
+    projects.push((ws.clone(), ws.join("target"), ws_bytes, 1));
 
     let custom = root.join("custom-dir");
     write_file(&custom.join("Cargo.toml"), 40);
@@ -58,8 +69,8 @@ pub fn build_rust_fixture(root: &Path) -> RustFixture {
         "[build]\ntarget-dir = \"out\"\n",
     )
     .unwrap();
-    write_file(&custom.join("out/x.bin"), 300);
-    projects.push((custom.clone(), custom.join("out"), 300, 1));
+    let custom_bytes = write_file(&custom.join("out/x.bin"), 300);
+    projects.push((custom.clone(), custom.join("out"), custom_bytes, 1));
 
     write_file(&root.join("no-target/Cargo.toml"), 40);
 

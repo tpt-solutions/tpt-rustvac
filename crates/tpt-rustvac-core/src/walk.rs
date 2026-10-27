@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use ignore::{WalkBuilder, WalkState};
 
-use crate::identity::hardlink_identity;
+use crate::identity::{disk_bytes, hardlink_identity};
 
 /// Aggregate for a directory: its own files plus, after rollup, everything below it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -195,7 +195,7 @@ fn visit(local: &mut Local<'_>, result: Result<ignore::DirEntry, ignore::Error>)
 
     let agg = local.map.entry(parent.to_path_buf()).or_default();
     if !is_duplicate {
-        agg.size += md.len();
+        agg.size += disk_bytes(path, &md);
         agg.files += 1;
     }
     agg.newest = max_time(agg.newest, md.modified().ok());

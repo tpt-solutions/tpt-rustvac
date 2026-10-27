@@ -483,6 +483,12 @@ pub fn compress_and_vacuum(
     archive_dir: &Path,
     busy_grace: Duration,
 ) -> Result<PackReport> {
+    if let Some(reason) = crate::safety::sync_managed(target) {
+        return Err(Error::Archive {
+            path: target.to_path_buf(),
+            reason,
+        });
+    }
     let report = pack(target, project, archive_dir)?;
     if is_busy(report.newest, SystemTime::now(), busy_grace) {
         return Err(Error::Busy {

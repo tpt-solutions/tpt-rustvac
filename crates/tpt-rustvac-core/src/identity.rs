@@ -17,6 +17,36 @@ pub fn hardlink_identity(path: &Path, md: &Metadata) -> Option<(u64, u64)> {
     }
 }
 
+/// Bytes this file takes on disk. A cloud placeholder (OneDrive Files On-Demand) takes none,
+/// and a sparse or compressed file takes its allocated size. On Windows this is the allocated
+/// size from `GetCompressedFileSizeW`. Elsewhere it is the logical length, for now (see todo.md,
+/// Phase 8, "Sizes are logical").
+#[cfg(windows)]
+pub fn disk_bytes(path: &Path, md: &Metadata) -> u64 {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;
+
+    let wide: Vec<u16> = crate::safety::long_path(path)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut high: u32 = 0;
+    // SAFETY: `wide` is a valid, NUL-terminated UTF-16 string that outlives the call, and
+    // `high` is a valid out-pointer for the high 32 bits.
+    let low = unsafe { GetCompressedFileSizeW(wide.as_ptr(), &mut high) };
+    // u32::MAX is the failure value. It is only an error when GetLastError is set too.
+    if low == u32::MAX && std::io::Error::last_os_error().raw_os_error().unwrap_or(0) != 0 {
+        return md.len();
+    }
+    ((high as u64) << 32) | low as u64
+}
+
+#[cfg(not(windows))]
+pub fn disk_bytes(_path: &Path, md: &Metadata) -> u64 {
+    md.len()
+}
+
 #[cfg(windows)]
 pub fn hardlink_identity(path: &Path, _md: &Metadata) -> Option<(u64, u64)> {
     // Stable std does not expose the link count or file index on Windows,

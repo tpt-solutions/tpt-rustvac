@@ -391,16 +391,16 @@ impl Model {
             let Some(node) = self.arena.get(*id) else {
                 continue;
             };
-            let reason = if node.kind == Kind::Root {
-                Some("it is the scan root")
+            let reason: Option<String> = if node.kind == Kind::Root {
+                Some("it is the scan root".into())
             } else if is_kept(&node.path, &keep) {
-                Some("it is in your keep list")
+                Some("it is in your keep list".into())
             } else if kind == ActionKind::Compress && !is_rust_target(node) {
-                Some("only target folders can be compressed")
+                Some("only target folders can be compressed".into())
             } else if kind == ActionKind::Compress && node.state == State::Busy {
-                Some("it was modified recently")
+                Some("it was modified recently".into())
             } else {
-                None
+                safety::sync_managed(&node.path)
             };
             match reason {
                 Some(r) => refused.push(format!("{}: {r}", node.path.display())),

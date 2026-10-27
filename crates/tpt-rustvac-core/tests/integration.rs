@@ -102,7 +102,13 @@ fn rust_scan_projects_roll_up_targets() {
         .iter()
         .find(|n| n.kind == Kind::Project && n.name == "api-server")
         .unwrap();
-    assert_eq!(api.size, 5000);
+    let api_fixture = fixture
+        .projects
+        .iter()
+        .find(|p| p.0.ends_with("api-server"))
+        .unwrap()
+        .2;
+    assert_eq!(api.size, api_fixture);
     assert_eq!(api.files, 2);
     assert_eq!(api.state, State::Done);
     assert_eq!(api.children.len(), 1);
@@ -120,9 +126,19 @@ fn rust_scan_projects_roll_up_targets() {
         })
         .collect();
     kids.sort();
+    let api_target = fixture.root.join("api-server/target");
     assert_eq!(
         kids,
-        vec![("debug".to_string(), 4000), ("release".to_string(), 1000)]
+        vec![
+            (
+                "debug".to_string(),
+                support::disk_of(&api_target.join("debug/deps/lib.rlib"))
+            ),
+            (
+                "release".to_string(),
+                support::disk_of(&api_target.join("release/app"))
+            ),
+        ]
     );
 }
 
@@ -143,7 +159,7 @@ fn freshly_written_targets_are_busy() {
 fn rust_scan_resolves_env_target_dir_once() {
     let dir = tempfile::tempdir().unwrap();
     let shared = dir.path().join("shared-target");
-    support::write_file(&shared.join("a.bin"), 123);
+    let shared_bytes = support::write_file(&shared.join("a.bin"), 123);
     support::write_file(&dir.path().join("p1/Cargo.toml"), 10);
     support::write_file(&dir.path().join("p2/Cargo.toml"), 10);
 
@@ -157,24 +173,24 @@ fn rust_scan_resolves_env_target_dir_once() {
     // Both projects point at the same target, so it is counted once.
     let targets: Vec<_> = arena.iter().filter(|n| n.kind == Kind::Target).collect();
     assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].size, 123);
+    assert_eq!(targets[0].size, shared_bytes);
 }
 
 #[test]
 fn general_scan_rolls_up_directories() {
     let dir = tempfile::tempdir().unwrap();
-    support::write_file(&dir.path().join("a/b/file1"), 100);
-    support::write_file(&dir.path().join("a/file2"), 50);
-    support::write_file(&dir.path().join("c/file3"), 10);
+    let file1 = support::write_file(&dir.path().join("a/b/file1"), 100);
+    let file2 = support::write_file(&dir.path().join("a/file2"), 50);
+    let file3 = support::write_file(&dir.path().join("c/file3"), 10);
 
     let arena = run_scan(ScanRequest::general(dir.path().to_path_buf()));
     let by_name = |name: &str| arena.iter().find(|n| n.name == name).unwrap();
 
-    assert_eq!(arena.root().unwrap().size, 160);
+    assert_eq!(arena.root().unwrap().size, file1 + file2 + file3);
     assert_eq!(arena.root().unwrap().files, 3);
-    assert_eq!(by_name("a").size, 150);
-    assert_eq!(by_name("b").size, 100);
-    assert_eq!(by_name("c").size, 10);
+    assert_eq!(by_name("a").size, file1 + file2);
+    assert_eq!(by_name("b").size, file1);
+    assert_eq!(by_name("c").size, file3);
     assert_eq!(by_name("b").kind, Kind::Directory);
     // Parent links must agree with the children lists.
     let a = by_name("a");
@@ -198,14 +214,14 @@ fn general_scan_counts_hardlinks_once() {
 fn hardlink_case() {
     let dir = tempfile::tempdir().unwrap();
     let original = dir.path().join("original.bin");
-    support::write_file(&original, 1000);
+    let bytes = support::write_file(&original, 1000);
     if fs::hard_link(&original, dir.path().join("link.bin")).is_err() {
         eprintln!("filesystem does not support hard links; skipping");
         return;
     }
     let arena = run_scan(ScanRequest::general(dir.path().to_path_buf()));
     let root = arena.root().unwrap();
-    assert_eq!(root.size, 1000, "hardlinked file must count once");
+    assert_eq!(root.size, bytes, "hardlinked file must count once");
     assert_eq!(root.files, 1);
 }
 

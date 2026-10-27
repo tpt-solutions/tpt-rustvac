@@ -59,8 +59,54 @@ pub fn long_path(path: &Path) -> PathBuf {
     PathBuf::from(format!(r"\\?\{s}"))
 }
 
+/// Why a path must not be trashed or archived, or `None` if it may be. On Windows a path is
+/// refused when it is under a OneDrive folder, or when it or any folder above it is a reparse
+/// point. Cloud sync folders are reparse points, and so are symlinks and junctions. Removing
+/// a file in a sync folder can remove the cloud copy too. Elsewhere nothing is refused here.
+#[cfg(windows)]
+pub fn sync_managed(path: &Path) -> Option<String> {
+    use std::os::windows::fs::MetadataExt;
+    const REPARSE_POINT: u32 = 0x400;
+
+    let abs = absolute(path);
+    let text = abs.to_string_lossy().to_lowercase();
+    for var in ["OneDrive", "OneDriveCommercial", "OneDriveConsumer"] {
+        if let Some(root) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+            let root = root.to_string_lossy().to_lowercase();
+            if text == root || text.starts_with(&format!("{}\\", root.trim_end_matches('\\'))) {
+                return Some(format!("it is inside your OneDrive folder ({var})"));
+            }
+        }
+    }
+    for ancestor in abs.ancestors() {
+        if ancestor.parent().is_none() {
+            break;
+        }
+        if let Ok(md) = std::fs::symlink_metadata(ancestor) {
+            if md.file_attributes() & REPARSE_POINT != 0 {
+                return Some(format!(
+                    "it is under a sync folder, symlink or junction ({})",
+                    ancestor.display()
+                ));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+pub fn sync_managed(_path: &Path) -> Option<String> {
+    None
+}
+
 /// Moves a path to the Recycle Bin / Trash. This is the default removal action.
 pub fn move_to_trash(path: &Path) -> Result<()> {
+    if let Some(reason) = sync_managed(path) {
+        return Err(Error::Trash {
+            path: path.to_path_buf(),
+            reason,
+        });
+    }
     trash::delete(long_path(path)).map_err(|e| Error::Trash {
         path: path.to_path_buf(),
         reason: e.to_string(),

@@ -39,7 +39,8 @@ pub struct Node {
     pub name: String,
     pub path: PathBuf,
     pub kind: Kind,
-    /// Bytes of unique files below this node (hardlinks counted once).
+    /// Bytes on disk of unique files below this node (hardlinks counted once). See
+    /// `identity::disk_bytes`.
     pub size: u64,
     /// Count of unique files below this node.
     pub files: u64,
