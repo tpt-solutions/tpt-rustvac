@@ -85,3 +85,46 @@ pub fn build_rust_fixture(root: &Path) -> RustFixture {
         total_files,
     }
 }
+
+/// Writes `<target>/.rustc_info.json` the way cargo does: the `rustc -vV` text sits in one
+/// `outputs` entry, next to a cfg dump.
+pub fn write_rustc_info(target: &Path, release: &str, commit: &str) {
+    let vv = format!(
+        "rustc {release} (abc 2026-01-01)\\nbinary: rustc\\ncommit-hash: {commit}\\ncommit-date: 2026-01-01\\nhost: x86_64-unknown-linux-gnu\\nrelease: {release}\\n"
+    );
+    let json = format!(
+        r#"{{"rustc_fingerprint":1,"outputs":{{"1":{{"success":true,"status":"","code":0,"stdout":"{vv}","stderr":""}},"2":{{"success":true,"status":"","code":0,"stdout":"___\\nunix\\n","stderr":""}}}},"successes":{{}}}}"#
+    );
+    fs::create_dir_all(target).unwrap();
+    fs::write(target.join(".rustc_info.json"), json).unwrap();
+}
+
+/// Writes an `incremental/` folder under `<target>/<profile>` and returns its bytes on disk.
+pub fn write_incremental(target: &Path, profile: &str, size: usize) -> u64 {
+    write_file(
+        &target
+            .join(profile)
+            .join("incremental/crate-abc/dep-graph.bin"),
+        size,
+    )
+}
+
+/// A fake rustup home and cargo home with one entry of each regenerable kind.
+pub struct Homes {
+    pub rustup: PathBuf,
+    pub cargo: PathBuf,
+}
+
+pub fn build_homes(root: &Path) -> Homes {
+    let rustup = root.join("rustup");
+    let cargo = root.join("cargo");
+    write_file(&rustup.join("tmp/partial-install/a.bin"), 1000);
+    write_file(&rustup.join("downloads/x.partial"), 500);
+    write_file(&rustup.join("toolchains/stable-fake/lib/core.rlib"), 800);
+    write_file(&cargo.join("registry/cache/index-1/foo.crate"), 2000);
+    write_file(&cargo.join("registry/src/index-1/foo-1.0/lib.rs"), 3000);
+    write_file(&cargo.join("registry/index/index-1/.cache/f"), 400);
+    write_file(&cargo.join("git/checkouts/repo-1/abc/f"), 700);
+    write_file(&cargo.join("git/db/repo-1/pack"), 900);
+    Homes { rustup, cargo }
+}

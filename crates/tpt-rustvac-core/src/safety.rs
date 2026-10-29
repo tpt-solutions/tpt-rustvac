@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::config::{RemoveMode, RemovePolicy};
 use crate::error::{Error, Result};
 
 /// Refuses filesystem roots and the home directory unless `force` is set.
@@ -114,7 +115,14 @@ pub fn move_to_trash(path: &Path) -> Result<()> {
 }
 
 /// Deletes a path for good. The GUI only calls this after a second, explicit confirmation.
+/// Sync-managed paths are refused, as they are for the trash.
 pub fn delete_permanently(path: &Path) -> Result<()> {
+    if let Some(reason) = sync_managed(path) {
+        return Err(Error::Archive {
+            path: path.to_path_buf(),
+            reason,
+        });
+    }
     let long = long_path(path);
     let meta = std::fs::symlink_metadata(&long).map_err(|e| Error::io(path, e))?;
     let result = if meta.is_dir() {
@@ -123,4 +131,92 @@ pub fn delete_permanently(path: &Path) -> Result<()> {
         std::fs::remove_file(&long)
     };
     result.map_err(|e| Error::io(path, e))
+}
+
+/// What `remove_with_policy` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    Trashed,
+    Deleted,
+}
+
+/// Which removal the policy picks for an item of `size` bytes.
+pub fn choose_removal(size: u64, policy: &RemovePolicy) -> Removal {
+    match policy.mode {
+        RemoveMode::Trash => Removal::Trashed,
+        RemoveMode::Permanent => Removal::Deleted,
+        RemoveMode::Auto if size <= policy.trash_max => Removal::Trashed,
+        RemoveMode::Auto => Removal::Deleted,
+    }
+}
+
+/// Removes a regenerable path under the policy. Not for `target/` compress, which always
+/// archives, verifies and trashes.
+pub fn remove_with_policy(path: &Path, size: u64, policy: &RemovePolicy) -> Result<Removal> {
+    let action = choose_removal(size, policy);
+    match action {
+        Removal::Trashed => move_to_trash(path)?,
+        Removal::Deleted => delete_permanently(path)?,
+    }
+    Ok(action)
+}
+
+/// Removes the paths that make up one unit, under the policy. Stops at the first failure.
+/// Paths already removed stay removed, which is safe for regenerable build output.
+pub fn remove_group_with_policy(
+    paths: &[PathBuf],
+    size: u64,
+    policy: &RemovePolicy,
+) -> Result<Removal> {
+    let action = choose_removal(size, policy);
+    for path in paths {
+        match action {
+            Removal::Trashed => move_to_trash(path)?,
+            Removal::Deleted => delete_permanently(path)?,
+        }
+    }
+    Ok(action)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy(mode: RemoveMode) -> RemovePolicy {
+        RemovePolicy {
+            mode,
+            trash_max: 100,
+        }
+    }
+
+    #[test]
+    fn auto_threshold() {
+        let p = policy(RemoveMode::Auto);
+        assert_eq!(choose_removal(0, &p), Removal::Trashed);
+        assert_eq!(choose_removal(100, &p), Removal::Trashed);
+        assert_eq!(choose_removal(101, &p), Removal::Deleted);
+    }
+
+    #[test]
+    fn fixed_modes_ignore_size() {
+        assert_eq!(
+            choose_removal(u64::MAX, &policy(RemoveMode::Trash)),
+            Removal::Trashed
+        );
+        assert_eq!(
+            choose_removal(0, &policy(RemoveMode::Permanent)),
+            Removal::Deleted
+        );
+    }
+
+    #[test]
+    fn permanent_removal_deletes_a_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let victim = dir.path().join("cache");
+        std::fs::create_dir_all(victim.join("sub")).unwrap();
+        std::fs::write(victim.join("sub").join("f"), b"x").unwrap();
+        let done = remove_with_policy(&victim, 1, &policy(RemoveMode::Permanent)).unwrap();
+        assert_eq!(done, Removal::Deleted);
+        assert!(!victim.exists());
+    }
 }
