@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
+description = "rustvac: find Cargo target folders, measure any folder, and archive what you do not need."
+keywords = ["cargo", "target", "disk-usage", "cleanup", "cli"]
+categories = ["command-line-utilities", "development-tools", "filesystem"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }

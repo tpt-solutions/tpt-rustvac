@@ -1,6 +1,8 @@
 //! `rustvac`: find Rust target folders, measure any folder, and vacuum what you don't need.
 
+mod cleanup;
 mod format;
+mod monitor;
 
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -12,11 +14,12 @@ use serde::Serialize;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 use tpt_rustvac_core::archive;
-use tpt_rustvac_core::config::{default_config_path, expand_tilde, Config};
+use tpt_rustvac_core::config::{default_config_path, expand_tilde, Config, RemoveMode};
 use tpt_rustvac_core::filter::Filter;
 use tpt_rustvac_core::model::{Arena, Kind, NodeId, State};
 use tpt_rustvac_core::safety::{check_scan_root, is_kept};
 use tpt_rustvac_core::scan::{self, ScanEvent, ScanRequest};
+use tpt_rustvac_core::target::{built_with, is_stale};
 
 use format::{age_days, age_label, human_bytes, parse_duration, parse_size};
 
@@ -45,6 +48,9 @@ enum Command {
         /// Only show targets whose newest file is at least this old (for example 2d, 12h).
         #[arg(long)]
         older_than: Option<String>,
+        /// Only targets built by a compiler that is no longer installed.
+        #[arg(long)]
+        stale_toolchain: bool,
         #[arg(long)]
         json: bool,
         /// Allow scanning a filesystem root or your home directory.
@@ -55,6 +61,9 @@ enum Command {
     List {
         #[arg(long = "path")]
         paths: Vec<PathBuf>,
+        /// Only targets built by a compiler that is no longer installed.
+        #[arg(long)]
+        stale_toolchain: bool,
         #[arg(long)]
         force: bool,
     },
@@ -88,6 +97,9 @@ enum Command {
     Compress {
         #[arg(long)]
         older_than: Option<String>,
+        /// Only targets built by a compiler that is no longer installed.
+        #[arg(long)]
+        stale_toolchain: bool,
         /// Show the plan and change nothing. This is the default when --yes is not given.
         #[arg(long)]
         dry_run: bool,
@@ -115,6 +127,87 @@ enum Command {
         #[command(subcommand)]
         command: ArchiveCommand,
     },
+    /// Remove part of a target/ folder: its incremental caches, a whole build profile, or the
+    /// build output of dependency versions the lockfile no longer names.
+    Prune {
+        /// Remove every incremental/ folder.
+        #[arg(long)]
+        incremental: bool,
+        /// Remove a whole profile folder, such as debug.
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        older_than: Option<String>,
+        /// Only targets built by a compiler that is no longer installed.
+        #[arg(long)]
+        stale_toolchain: bool,
+        /// Build output for dependency versions the project's Cargo.lock no longer names.
+        #[arg(long)]
+        stale_deps: bool,
+        /// auto, trash or permanent. Overrides remove_mode in the config.
+        #[arg(long, value_parser = cleanup::parse_remove)]
+        remove: Option<RemoveMode>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long = "path")]
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// List installed Rust toolchains, or remove one through rustup.
+    Toolchains {
+        #[command(subcommand)]
+        command: Option<cleanup::ToolchainsCommand>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List rustup and cargo cache folders, or clear the regenerable ones.
+    Caches {
+        #[command(subcommand)]
+        command: Option<cleanup::CachesCommand>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One plan across old-compiler targets, incremental caches and the regenerable caches.
+    Sweep {
+        #[arg(long)]
+        older_than: Option<String>,
+        /// auto, trash or permanent. Overrides remove_mode in the config.
+        #[arg(long, value_parser = cleanup::parse_remove)]
+        remove: Option<RemoveMode>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long = "path")]
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Read-only drive check: free space and what a sweep would reclaim. Saves a report.
+    Check {
+        #[arg(long)]
+        json: bool,
+        /// Warn when free space is under this size, for example 50GB. Overrides warn_below.
+        #[arg(long)]
+        warn_below: Option<String>,
+        /// Show a Windows notification when free space is under the warning size.
+        #[arg(long)]
+        notify: bool,
+        #[arg(long = "path")]
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Register, show or remove the scheduled check.
+    Schedule {
+        #[command(subcommand)]
+        command: monitor::ScheduleCommand,
+    },
+    /// Show the result of the last check.
+    Status,
     /// Launch the GUI.
     Gui,
 }
@@ -161,19 +254,27 @@ fn run(cli: Cli) -> CmdResult {
         Command::Scan {
             paths,
             older_than,
+            stale_toolchain,
             json,
             force,
         } => {
             let filter = build_filter(older_than.as_deref(), None)?;
             let roots = resolve_roots(paths, &config, force)?;
             let arena = scan_targets(&roots, &config)?;
-            print_targets(&arena, &filter, &config, json)?;
+            print_targets(&arena, &filter, &config, json, stale_toolchain)?;
             Ok(ExitCode::SUCCESS)
         }
-        Command::List { paths, force } => {
+        Command::List {
+            paths,
+            stale_toolchain,
+            force,
+        } => {
             let roots = resolve_roots(paths, &config, force)?;
             let arena = scan_targets(&roots, &config)?;
-            print_targets(&arena, &Filter::default(), &config, false)?;
+            if let Some(line) = monitor::status_line(&config, SystemTime::now()) {
+                println!("{line}");
+            }
+            print_targets(&arena, &Filter::default(), &config, false, stale_toolchain)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Measure {
@@ -217,6 +318,7 @@ fn run(cli: Cli) -> CmdResult {
         }
         Command::Compress {
             older_than,
+            stale_toolchain,
             dry_run,
             yes,
             mode,
@@ -226,8 +328,81 @@ fn run(cli: Cli) -> CmdResult {
             let filter = build_filter(older_than.as_deref(), Some(config.older_than_days))?;
             let roots = resolve_roots(paths, &config, force)?;
             let arena = scan_targets(&roots, &config)?;
-            compress(&arena, &filter, &config, mode, dry_run, yes)
+            let (candidates, _skipped) =
+                eligible_targets(&arena, &filter, &config, stale_toolchain)?;
+            compress(candidates, &config, mode, dry_run, yes)
         }
+        Command::Prune {
+            incremental,
+            profile,
+            older_than,
+            stale_toolchain,
+            stale_deps,
+            remove,
+            dry_run,
+            yes,
+            paths,
+            force,
+        } => {
+            let filter = build_filter(older_than.as_deref(), Some(config.older_than_days))?;
+            let roots = resolve_roots(paths, &config, force)?;
+            let arena = scan_targets(&roots, &config)?;
+            let (candidates, skipped) =
+                eligible_targets(&arena, &filter, &config, stale_toolchain)?;
+            cleanup::prune(
+                &config,
+                cleanup::PruneArgs {
+                    incremental,
+                    profile,
+                    stale_deps,
+                    remove,
+                    dry_run,
+                    yes,
+                },
+                candidates,
+                skipped,
+            )
+        }
+        Command::Toolchains { command, json } => cleanup::toolchains_command(command, json),
+        Command::Caches { command, json } => cleanup::caches_command(command, json, &config),
+        Command::Sweep {
+            older_than,
+            remove,
+            dry_run,
+            yes,
+            paths,
+            force,
+        } => {
+            let filter = build_filter(older_than.as_deref(), Some(config.older_than_days))?;
+            let roots = resolve_roots(paths, &config, force)?;
+            let arena = scan_targets(&roots, &config)?;
+            cleanup::sweep_command(&arena, &filter, &config, remove, dry_run, yes)
+        }
+        Command::Check {
+            json,
+            warn_below,
+            notify,
+            paths,
+            force,
+        } => {
+            let filter = build_filter(None, Some(config.older_than_days))?;
+            let roots = resolve_roots(paths, &config, force)?;
+            let arena = scan_targets(&roots, &config)?;
+            monitor::check(
+                &arena,
+                &filter,
+                &config,
+                monitor::CheckArgs {
+                    json,
+                    warn_below,
+                    notify,
+                },
+            )
+        }
+        Command::Schedule { command } => {
+            monitor::schedule_command(command, &config, cli.config.as_deref())
+        }
+        Command::Status => monitor::status(&config),
         Command::Restore { slug, into } => {
             let vacuum = config.archive_dir_path();
             let entry = archive::latest_for_slug(&vacuum, &slug).map_err(|e| e.to_string())?;
@@ -336,6 +511,8 @@ struct TargetRow {
     files: u64,
     #[tabled(rename = "Age")]
     age: String,
+    #[tabled(rename = "Rustc")]
+    rustc: String,
     #[tabled(rename = "State")]
     state: String,
     #[tabled(rename = "Path")]
@@ -352,6 +529,8 @@ struct TargetJson {
     newest_unix: Option<u64>,
     state: String,
     kept: bool,
+    /// The compiler that last built the target, from its `.rustc_info.json`.
+    rustc: Option<String>,
 }
 
 /// Targets as (project node, target node), largest first.
@@ -373,6 +552,45 @@ fn sorted_targets<'a>(
     out
 }
 
+/// Targets that compress and prune may act on: sized, not busy, not kept, and (with
+/// `stale`) built by a compiler that is no longer installed. Busy and kept targets that would
+/// otherwise qualify are returned with the reason, so the caller can show them.
+type Eligible<'a> = (
+    Vec<(&'a tpt_rustvac_core::Node, &'a tpt_rustvac_core::Node)>,
+    Vec<(PathBuf, String)>,
+);
+
+fn eligible_targets<'a>(
+    arena: &'a Arena,
+    filter: &Filter,
+    config: &Config,
+    stale: bool,
+) -> Result<Eligible<'a>, String> {
+    let installed = if stale {
+        Some(cleanup::installed_compilers()?)
+    } else {
+        None
+    };
+    let keep = config.keep_paths();
+    let mut eligible = Vec::new();
+    let mut skipped = Vec::new();
+    for (project, t) in sorted_targets(arena, filter, SystemTime::now()) {
+        if let Some(i) = &installed {
+            if !is_stale(built_with(&t.path).as_ref(), i) {
+                continue;
+            }
+        }
+        if t.state == State::Busy {
+            skipped.push((t.path.clone(), "busy: modified recently".into()));
+        } else if is_kept(&t.path, &keep) {
+            skipped.push((t.path.clone(), "kept by the config".into()));
+        } else if t.state == State::Done {
+            eligible.push((project, t));
+        }
+    }
+    Ok((eligible, skipped))
+}
+
 fn state_label(state: &State, kept: bool) -> String {
     let base = match state {
         State::Pending => "pending",
@@ -389,10 +607,20 @@ fn state_label(state: &State, kept: bool) -> String {
     }
 }
 
-fn print_targets(arena: &Arena, filter: &Filter, config: &Config, json: bool) -> CmdResult {
+fn print_targets(
+    arena: &Arena,
+    filter: &Filter,
+    config: &Config,
+    json: bool,
+    stale_only: bool,
+) -> CmdResult {
     let now = SystemTime::now();
     let keep = config.keep_paths();
-    let targets = sorted_targets(arena, filter, now);
+    let mut targets = sorted_targets(arena, filter, now);
+    if stale_only {
+        let installed = cleanup::installed_compilers()?;
+        targets.retain(|(_, t)| is_stale(built_with(&t.path).as_ref(), &installed));
+    }
 
     if json {
         let rows: Vec<TargetJson> = targets
@@ -411,6 +639,7 @@ fn print_targets(arena: &Arena, filter: &Filter, config: &Config, json: bool) ->
                         .map(|d| d.as_secs()),
                     state: state_label(&t.state, false),
                     kept,
+                    rustc: built_with(&t.path).map(|r| r.release),
                 }
             })
             .collect();
@@ -430,6 +659,7 @@ fn print_targets(arena: &Arena, filter: &Filter, config: &Config, json: bool) ->
             size: human_bytes(t.size),
             files: t.files,
             age: age_label(t.newest, now),
+            rustc: built_with(&t.path).map_or("-".into(), |r| r.release),
             state: state_label(&t.state, is_kept(&t.path, &keep)),
             path: t.path.display().to_string(),
         })
@@ -442,20 +672,13 @@ fn print_targets(arena: &Arena, filter: &Filter, config: &Config, json: bool) ->
 }
 
 fn compress(
-    arena: &Arena,
-    filter: &Filter,
+    candidates: Vec<(&tpt_rustvac_core::Node, &tpt_rustvac_core::Node)>,
     config: &Config,
     mode: Mode,
     dry_run: bool,
     yes: bool,
 ) -> CmdResult {
     let now = SystemTime::now();
-    let keep = config.keep_paths();
-    let candidates: Vec<_> = sorted_targets(arena, filter, now)
-        .into_iter()
-        .filter(|(_, t)| t.state == State::Done)
-        .filter(|(_, t)| !is_kept(&t.path, &keep))
-        .collect();
 
     if candidates.is_empty() {
         println!("nothing to compress");

@@ -20,30 +20,7 @@ pub fn human_bytes(bytes: u64) -> String {
     }
 }
 
-/// Parses sizes like `100MB`, `5GiB` or `2048`. Units are powers of 1024 for both
-/// the `B` and `iB` forms, so `MB` and `MiB` mean the same thing here.
-pub fn parse_size(input: &str) -> Result<u64, String> {
-    let s = input.trim();
-    let split = s
-        .find(|c: char| !c.is_ascii_digit() && c != '.')
-        .unwrap_or(s.len());
-    let (num, unit) = s.split_at(split);
-    let value: f64 = num.parse().map_err(|_| format!("invalid size '{input}'"))?;
-    let multiplier = match unit
-        .trim()
-        .to_ascii_lowercase()
-        .trim_end_matches("ib")
-        .trim_end_matches('b')
-    {
-        "" => 1,
-        "k" => KIB,
-        "m" => KIB.pow(2),
-        "g" => KIB.pow(3),
-        "t" => KIB.pow(4),
-        _ => return Err(format!("unknown size unit in '{input}'")),
-    };
-    Ok((value * multiplier as f64) as u64)
-}
+pub use tpt_rustvac_core::config::parse_size;
 
 /// Parses durations like `2d`, `12h`, `30m`, `45s`, `1w`. A bare number means days.
 pub fn parse_duration(input: &str) -> Result<Duration, String> {
