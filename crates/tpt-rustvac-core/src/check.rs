@@ -26,7 +26,10 @@ pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     (ok != 0).then_some((free, total))
 }
 
+// The casts are no-ops on some Unixes (Linux reports u64) and needed on others (macOS reports
+// narrower block counts), so they stay.
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::ffi::OsStrExt;
 
