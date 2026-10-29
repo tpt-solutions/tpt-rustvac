@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
+description = "Scan, measure, archive and restore Rust target folders. The engine behind rustvac."
+keywords = ["cargo", "target", "disk-usage", "cleanup", "archive"]
+categories = ["filesystem", "development-tools"]
 
 [dependencies]
 chrono = "0.4.45"
@@ -23,6 +26,9 @@ zstd = { version = "0.14.3", features = ["zstdmt"] }
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.191"
 
 [dev-dependencies]
 tempfile = "3.27.0"

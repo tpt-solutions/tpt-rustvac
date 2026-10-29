@@ -5,6 +5,7 @@
 
 pub mod archive;
 pub mod caches;
+pub mod check;
 pub mod config;
 pub mod error;
 pub mod filter;
@@ -14,6 +15,7 @@ pub mod prune;
 pub mod safety;
 pub mod scan;
 pub mod schedule;
+pub mod sweep;
 pub mod target;
 pub mod toolchains;
 pub mod walk;
