@@ -95,6 +95,11 @@ pub struct Model {
 }
 
 impl Model {
+    /// Free and total bytes on the home drive, which is the drive the alert watches.
+    pub fn disk_space(&self) -> Option<(u64, u64)> {
+        tpt_rustvac_core::check::disk_space(&tpt_rustvac_core::config::home_dir()?)
+    }
+
     pub fn new() -> Self {
         let (config, config_error) = match default_config_path() {
             Some(path) => match Config::load(&path) {

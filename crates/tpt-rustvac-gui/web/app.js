@@ -39,6 +39,21 @@
     confirmNote: $("confirm-note"),
     confirmCancel: $("confirm-cancel"),
     confirmOk: $("confirm-ok"),
+    openSettings: $("open-settings"),
+    settings: $("settings"),
+    settingsForm: $("settings-form"),
+    settingsError: $("settings-error"),
+    settingsPath: $("settings-path"),
+    settingsCancel: $("settings-cancel"),
+    warnOn: $("set-warn-on"),
+    warnN: $("set-warn-n"),
+    warnUnit: $("set-warn-unit"),
+    removeMode: $("set-remove-mode"),
+    trashN: $("set-trash-n"),
+    trashUnit: $("set-trash-unit"),
+    older: $("set-older"),
+    busy: $("set-busy"),
+    checkEvery: $("set-check-every"),
   };
 
   // The last state the app sent. Null until the first answer arrives.
@@ -145,13 +160,21 @@
     if (state && state.rootIsProject && state.mode === "rust" && !state.scanning && state.targets === 0) {
       parts.push("This folder is a project. Scans look for projects inside a folder, so choose the folder that holds it.");
     }
+    if (state && state.space && state.space.low) {
+      parts.push(
+        `Low disk space: ${human(state.space.free)} free, under your ${human(state.space.warnBelow)} alert.`,
+      );
+    }
     if (state && state.rowsTruncated) {
       parts.push("Showing the first rows only. Narrow the search to see the rest.");
     }
     const text = parts.filter(Boolean).join(" · ");
     els.notice.hidden = !text;
     els.notice.textContent = text;
-    const isError = (!!problem && problemIsError) || !!(state && state.configError);
+    const isError =
+      (!!problem && problemIsError) ||
+      !!(state && state.configError) ||
+      !!(state && state.space && state.space.low);
     els.notice.classList.toggle("error", isError);
   }
 
@@ -293,6 +316,77 @@
     els.failureList.replaceChildren(
       ...state.failures.map((line) => el("li", "", line)),
     );
+  }
+
+  // ---- settings -----------------------------------------------------------------------
+
+  // "50GB" or "1.5GiB" into a number and one of the units the dialog offers.
+  function splitSize(text) {
+    const match = /^\s*([\d.]+)\s*([kmgt]?)i?b?\s*$/i.exec(text || "");
+    if (!match) return { n: "", unit: "GB" };
+    const unit = { k: "MB", m: "MB", g: "GB", t: "TB", "": "MB" }[match[2].toLowerCase()];
+    let n = Number(match[1]);
+    // A value in KB or bytes is shown in MB, so it keeps its size.
+    if (match[2].toLowerCase() === "k") n /= 1024;
+    if (match[2] === "") n /= 1024 * 1024;
+    return { n: String(Math.round(n * 1000) / 1000), unit };
+  }
+
+  function joinSize(n, unit) {
+    return `${n}${unit}`;
+  }
+
+  function fillSettings() {
+    const s = state.settings;
+    const warn = splitSize(s.warnBelow);
+    els.warnOn.checked = !!s.warnBelow;
+    els.warnN.value = s.warnBelow ? warn.n : "";
+    els.warnUnit.value = warn.unit;
+    els.removeMode.value = s.removeMode;
+    const trash = splitSize(s.trashMaxSize);
+    els.trashN.value = trash.n;
+    els.trashUnit.value = trash.unit;
+    els.older.value = s.olderThanDays;
+    els.busy.value = s.busyGraceSeconds;
+    els.checkEvery.value = s.checkEvery;
+    els.settingsPath.textContent = s.configPath ? `Saved to ${s.configPath}` : "";
+    els.settingsError.hidden = true;
+    syncSettings();
+  }
+
+  // The size boxes only matter when their option is on.
+  function syncSettings() {
+    els.warnN.disabled = els.warnUnit.disabled = !els.warnOn.checked;
+    els.trashN.disabled = els.trashUnit.disabled = els.removeMode.value !== "auto";
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    const warnOn = els.warnOn.checked;
+    if (warnOn && !(Number(els.warnN.value) > 0)) {
+      return showSettingsError("Enter an alert size above zero, or turn the alert off.");
+    }
+    const changes = {
+      warnBelow: warnOn ? joinSize(els.warnN.value, els.warnUnit.value) : "",
+      removeMode: els.removeMode.value,
+      trashMaxSize: joinSize(els.trashN.value || "0", els.trashUnit.value),
+      olderThanDays: Math.max(0, Math.floor(Number(els.older.value) || 0)),
+      busyGraceSeconds: Math.max(1, Math.floor(Number(els.busy.value) || 0)),
+      checkEvery: els.checkEvery.value,
+    };
+    try {
+      await call("settings.set", changes);
+    } catch (error) {
+      return showSettingsError(describe(error));
+    }
+    els.settings.close();
+    notice("Settings saved.", false);
+    await pull();
+  }
+
+  function showSettingsError(text) {
+    els.settingsError.textContent = text;
+    els.settingsError.hidden = false;
   }
 
   // ---- selection and checks ------------------------------------------------------------
@@ -493,6 +587,16 @@
   els.reveal.addEventListener("click", () => runMenuAction("reveal"));
   els.copy.addEventListener("click", () => runMenuAction("copy"));
 
+  els.openSettings.addEventListener("click", () => {
+    if (!state) return;
+    fillSettings();
+    els.settings.showModal();
+  });
+  els.settingsForm.addEventListener("submit", saveSettings);
+  els.settingsCancel.addEventListener("click", () => els.settings.close());
+  els.warnOn.addEventListener("change", syncSettings);
+  els.removeMode.addEventListener("change", syncSettings);
+
   els.confirmOk.addEventListener("click", runPending);
   els.confirmCancel.addEventListener("click", () => {
     pending = null;
@@ -501,7 +605,7 @@
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") hideMenu();
-    if (els.confirm.open) return;
+    if (els.confirm.open || els.settings.open) return;
     if (event.target.matches("input, textarea")) {
       if (event.key === "Escape") event.target.blur();
       return;

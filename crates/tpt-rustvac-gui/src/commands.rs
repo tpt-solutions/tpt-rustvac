@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use serde_json::{json, Value};
+use tpt_rustvac_core::config::{default_config_path, Config, RemoveMode};
 use tpt_rustvac_core::model::{Kind, Node, NodeId, State};
 use tpt_shell::{App, CommandError, Target};
 
@@ -71,6 +72,12 @@ pub fn register(app: App, model: &Shared) -> App {
         "fs.write",
         no_target,
         handler(model, action_run),
+    )
+    .command(
+        "settings.set",
+        "fs.write",
+        no_target,
+        handler(model, settings_set),
     )
     .command(
         "path.reveal",
@@ -235,12 +242,90 @@ fn snapshot(m: &Model) -> Value {
         "failures": failures,
         "failureCount": m.failures.len(),
         "configError": m.config_error,
+        "settings": settings_json(&m.config),
+        "space": space_json(m),
         "rows": rows,
         "rowsTruncated": m.rows.len() > MAX_ROWS,
         "checked": checked,
         "roots": roots,
         "selected": selected,
     })
+}
+
+fn settings_json(c: &Config) -> Value {
+    json!({
+        "warnBelow": c.warn_below,
+        "checkEvery": c.check_every,
+        "removeMode": remove_mode_name(c.remove_mode),
+        "trashMaxSize": c.trash_max_size,
+        "olderThanDays": c.older_than_days,
+        "busyGraceSeconds": c.busy_grace_seconds,
+        "configPath": default_config_path().map(|p| p.display().to_string()),
+    })
+}
+
+fn remove_mode_name(mode: RemoveMode) -> &'static str {
+    match mode {
+        RemoveMode::Auto => "auto",
+        RemoveMode::Trash => "trash",
+        RemoveMode::Permanent => "permanent",
+    }
+}
+
+/// Free space on the home drive, and whether it is under the alert size.
+fn space_json(m: &Model) -> Value {
+    let space = m.disk_space();
+    let warn = m.config.warn_below_bytes().ok().flatten();
+    json!({
+        "free": space.map(|s| s.0),
+        "total": space.map(|s| s.1),
+        "warnBelow": warn,
+        "low": matches!((space, warn), (Some((free, _)), Some(w)) if free < w),
+    })
+}
+
+/// Applies the settings the page sends and saves them. The whole change is validated before
+/// anything is written, so a bad value leaves the config as it was.
+fn settings_set(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
+    let bad = |message: String| CommandError::new("RUSTVAC_BAD_ARGS", &message);
+    let mut next = m.config.clone();
+
+    if let Some(v) = args.get("warnBelow") {
+        // Null or an empty string turns the alert off.
+        next.warn_below = v
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from);
+    }
+    if let Some(v) = args["checkEvery"].as_str() {
+        next.check_every = v.to_string();
+    }
+    if let Some(v) = args["removeMode"].as_str() {
+        next.remove_mode = v.parse().map_err(bad)?;
+    }
+    if let Some(v) = args["trashMaxSize"].as_str() {
+        next.trash_max_size = v.trim().to_string();
+    }
+    if let Some(v) = args.get("olderThanDays").filter(|v| !v.is_null()) {
+        next.older_than_days = v
+            .as_u64()
+            .ok_or_else(|| bad("olderThanDays must be a whole number".into()))?;
+    }
+    if let Some(v) = args.get("busyGraceSeconds").filter(|v| !v.is_null()) {
+        next.busy_grace_seconds = v
+            .as_u64()
+            .ok_or_else(|| bad("busyGraceSeconds must be a whole number".into()))?;
+    }
+
+    let path = default_config_path().ok_or_else(|| {
+        CommandError::new("RUSTVAC_SETTINGS", "no config location on this system")
+    })?;
+    next.save(&path)
+        .map_err(|e| CommandError::new("RUSTVAC_SETTINGS", &e.to_string()))?;
+    m.config = next;
+    m.config_error = None;
+    Ok(Value::Null)
 }
 
 fn node_json(node: &Node, now: SystemTime) -> Value {
@@ -431,8 +516,12 @@ fn path_reveal(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
 
 #[cfg(windows)]
 fn reveal(path: &std::path::Path) -> Result<(), CommandError> {
+    use std::os::windows::process::CommandExt;
+
+    // Explorer needs the path quoted after /select,. A normal arg() would quote the whole
+    // thing when the path has spaces, and Explorer then opens Documents instead.
     std::process::Command::new("explorer")
-        .arg(format!("/select,{}", path.display()))
+        .raw_arg(format!("/select,\"{}\"", path.display()))
         .spawn()
         .map(|_| ())
         .map_err(|e| CommandError::new("RUSTVAC_REVEAL", &e.to_string()))
@@ -444,4 +533,49 @@ fn reveal(_: &std::path::Path) -> Result<(), CommandError> {
         "RUSTVAC_UNSUPPORTED",
         "showing a folder is only built for Windows so far",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Points the config location at a tempdir, so the real config is never touched.
+    fn scratch_config() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let var = if cfg!(windows) { "APPDATA" } else { "HOME" };
+        std::env::set_var(var, dir.path());
+        dir
+    }
+
+    #[test]
+    fn settings_are_validated_saved_and_reported() {
+        let dir = scratch_config();
+        let mut m = Model::new();
+
+        settings_set(
+            &mut m,
+            &json!({ "warnBelow": "1GB", "removeMode": "trash", "olderThanDays": 5 }),
+        )
+        .unwrap();
+        assert_eq!(m.config.warn_below.as_deref(), Some("1GB"));
+        let saved = default_config_path().unwrap();
+        assert!(saved.starts_with(dir.path()));
+        assert_eq!(Config::load(&saved).unwrap(), m.config);
+        let reported = settings_json(&m.config);
+        assert_eq!(reported["warnBelow"], "1GB");
+        assert_eq!(reported["removeMode"], "trash");
+        assert_eq!(reported["olderThanDays"], 5);
+
+        // A bad value changes nothing, in memory or on disk.
+        let before = m.config.clone();
+        assert!(settings_set(&mut m, &json!({ "warnBelow": "lots" })).is_err());
+        assert!(settings_set(&mut m, &json!({ "removeMode": "shred" })).is_err());
+        assert!(settings_set(&mut m, &json!({ "busyGraceSeconds": 0 })).is_err());
+        assert_eq!(m.config, before);
+        assert_eq!(Config::load(&saved).unwrap(), before);
+
+        // An empty size turns the alert off.
+        settings_set(&mut m, &json!({ "warnBelow": "" })).unwrap();
+        assert_eq!(m.config.warn_below, None);
+    }
 }

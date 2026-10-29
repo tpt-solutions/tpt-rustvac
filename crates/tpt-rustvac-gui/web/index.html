@@ -26,6 +26,7 @@
       <label class="check"><input id="hide-archived" type="checkbox"> Hide archived</label>
       <button type="button" id="sort" title="Toggle size sort  ( s )">Size ↓</button>
     </div>
+    <button type="button" id="open-settings" title="Settings">Settings</button>
   </header>
 
   <div id="notice" class="notice" hidden></div>
@@ -84,6 +85,66 @@
       <div class="dialog-buttons">
         <button type="button" id="confirm-cancel">Cancel</button>
         <button type="button" id="confirm-ok" class="primary">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settings">
+    <form id="settings-form" method="dialog">
+      <h2>Settings</h2>
+
+      <fieldset>
+        <legend>Low disk space alert</legend>
+        <label class="check"><input id="set-warn-on" type="checkbox"> Warn me when free space on the home drive is under</label>
+        <div class="size-input">
+          <input id="set-warn-n" type="number" min="0" step="any" aria-label="Alert size">
+          <select id="set-warn-unit" aria-label="Alert size unit">
+            <option>MB</option><option>GB</option><option>TB</option>
+          </select>
+        </div>
+        <p class="muted">Shown here while the app is open. The scheduled check
+          (<code>rustvac schedule set</code>) uses the same size.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Removing caches</legend>
+        <label>Mode
+          <select id="set-remove-mode">
+            <option value="auto">Auto: small to the trash, large deleted</option>
+            <option value="trash">Always to the trash</option>
+            <option value="permanent">Always delete permanently</option>
+          </select>
+        </label>
+        <label>Auto trashes items up to
+          <span class="size-input">
+            <input id="set-trash-n" type="number" min="0" step="any" aria-label="Trash limit">
+            <select id="set-trash-unit" aria-label="Trash limit unit">
+              <option>MB</option><option>GB</option><option>TB</option>
+            </select>
+          </span>
+        </label>
+        <p class="muted">Applies to caches, incremental folders and old-compiler targets. Compressing
+          a target always archives it and moves the original to the trash.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Scanning</legend>
+        <label>Treat a target as old after <input id="set-older" type="number" min="0" step="1"> days</label>
+        <label>Treat a target as busy if changed within <input id="set-busy" type="number" min="1" step="1"> seconds</label>
+        <label>Scheduled check
+          <select id="set-check-every">
+            <option value="off">Off</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <p id="settings-error" class="settings-error" hidden></p>
+      <p id="settings-path" class="muted"></p>
+      <div class="dialog-buttons">
+        <button type="button" id="settings-cancel">Cancel</button>
+        <button type="submit" id="settings-save" class="primary">Save</button>
       </div>
     </form>
   </dialog>

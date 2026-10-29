@@ -6,7 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
+description = "rustvac-gui: a native window for finding and archiving Rust target folders."
+keywords = ["cargo", "target", "disk-usage", "cleanup", "gui"]
+categories = ["gui", "development-tools", "filesystem"]
 
 [dependencies]
 serde_json = "1"
@@ -21,3 +24,6 @@ path = "src/main.rs"
 
 [target."cfg(windows)".dependencies]
 rfd = { version = "0.17.2", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.27.0"
