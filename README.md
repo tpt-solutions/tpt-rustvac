@@ -23,6 +23,49 @@ rustvac gui
 
 Add `--json` to `scan` or `measure` for scripting.
 
+### Toolchains, caches and the small-drive routine
+
+Targets are not the only regenerable Rust scratch. These commands cover the rest.
+
+```
+rustvac scan --stale-toolchain                 # targets built by a rustc you no longer have
+rustvac prune --incremental --dry-run          # incremental/ folders inside targets
+rustvac prune --profile debug                  # a whole profile folder
+rustvac toolchains                             # installed toolchains, with sizes
+rustvac toolchains rm nightly-2026-01-01-...   # through rustup, never by deleting folders
+rustvac caches                                 # rustup tmp/downloads, cargo registry and git
+rustvac caches clean --cargo-registry --older-than 30d
+rustvac sweep --dry-run                        # one plan across all of the above
+rustvac sweep                                  # confirm, then remove
+```
+
+`rustvac check` is a read-only check of free space on your home drive and of what a sweep
+would reclaim. It writes `~/.rustvac/recommendation.json` and `.txt`. `rustvac status` shows
+the result, and `rustvac list` prints it as its first line.
+
+```
+rustvac check --warn-below 50GB
+rustvac schedule set --every daily --at 09:00 --warn-below 50GB
+rustvac schedule status
+rustvac schedule remove
+```
+
+`schedule set` registers a per-user task named `rustvac-check` (`schtasks` on Windows, a
+`# rustvac` line in your crontab on Linux and macOS). It asks first. The task only runs
+`rustvac check`, so it never deletes anything by itself. On Windows the task window may flash
+when it runs. `--notify` (added to the task when you give `--warn-below`) shows a Windows
+notification when free space is under the limit. Elsewhere only the report is written.
+
+What a sweep touches:
+
+| Tier | Items | How |
+| --- | --- | --- |
+| Regenerable | rustup `tmp` and `downloads`, cargo `registry/cache`, `registry/src`, `git/checkouts`, `incremental/` folders, targets from an uninstalled rustc | Trash or permanent delete, by `remove_mode` |
+| Managed | `toolchains/<name>` | Only through `rustup toolchain uninstall`. The default toolchain is refused. |
+| Manual | `registry/index`, `git/db` | Listed, never in a sweep. They need the network to rebuild. |
+
+`target/` compress is unchanged: it archives, verifies and then trashes.
+
 ## Safety
 
 - Scanning is read-only.
@@ -33,7 +76,10 @@ Add `--json` to `scan` or `measure` for scripting.
 - A target modified in the last 60 seconds is marked busy and is never compressed.
   This is configurable with `busy_grace_seconds`.
 - Scanning `/`, a drive root or your home folder is refused unless you pass `--force`.
-- Folders in the `keep` list are never compressed.
+- Folders in the `keep` list are never compressed, pruned or swept.
+- Cache entries modified within the busy grace period are skipped, since an install may be
+  running. Paths under OneDrive, and symlinks and junctions, are refused on Windows.
+- Permanent deletion happens only for the regenerable tier, and only as `remove_mode` allows.
 
 ## Configuration
 
@@ -47,7 +93,15 @@ format = "tar.zst"
 exclude = ["**/vendor/**", "**/node_modules/**"]
 keep = ["~/Code/the-one-project-that-takes-40-minutes-to-build"]
 busy_grace_seconds = 60
+remove_mode = "auto"        # auto | trash | permanent, for caches, incremental/ and old-compiler targets
+trash_max_size = "256MB"    # auto: up to this goes to the trash, larger is deleted permanently
+check_every = "off"         # off | daily | weekly. `rustvac status` flags a check that is overdue
+warn_below = "50GB"         # warn when free space on the home drive is under this
 ```
+
+`auto` exists because the Recycle Bin is on the same drive: trashing a large cache frees
+nothing. Override it per run with `--remove auto|trash|permanent`. `RUSTUP_HOME` and
+`CARGO_HOME` are honoured, and default to `~/.rustup` and `~/.cargo`.
 
 ## Building
 

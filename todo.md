@@ -189,6 +189,70 @@ The GUI (`crates/tpt-rustvac-gui`) is a web UI hosted by [tpt-shell](../tpt-shel
 - [ ] Sizes on Linux and macOS are still logical lengths. They should match Windows: allocated blocks (`blocks() * 512`). Changing them shifts the expected sizes in the tests, so it is a separate step. Also, the archive totals (`archive.rs`, `pack`) still use logical lengths.
 - [x] Trash and compress refuse sync-managed paths *(note: decided and done on Windows. A path is refused if it is under a OneDrive folder, or if it or any folder above it is a reparse point. That covers cloud sync folders, symlinks and junctions. The guard runs in `safety::move_to_trash`, in `archive::compress_and_vacuum`, and in the GUI's preview. Tested with a real junction in `tests/sync_guard.rs`. Linux and macOS have no such rule.)*
 
+## Phase 9 — Toolchains, caches and scheduled checks (planned, CLI first)
+
+Plan: `C:\Users\Phillip\.claude\plans\part-of-the-purpose-crystalline-swing.md`. Aim: keep a small system drive (500 GB C:) free of regenerable Rust scratch. The GUI waits until the CLI side is done.
+
+### Decisions
+- [x] Cache removal is configurable: `auto` (small to trash, large deleted permanently), `trash`, `permanent`. Reason: the Recycle Bin is on the same drive, so trashing a large cache frees nothing. This applies to the regenerable tier only. `target/` compress still archives, verifies and trashes.
+- [x] Toolchains are removed only through `rustup toolchain uninstall`, never by deleting folders.
+- [x] The scheduler checks and recommends. It never deletes on its own.
+
+### Locations and removal policy
+- [x] `rustup_home()` and `cargo_home()` next to `config::home_dir` (`RUSTUP_HOME` / `CARGO_HOME` first, then `~/.rustup` / `~/.cargo`) *(note: in `config.rs`. Unit-tested only through the commands, not on their own.)*
+- [x] Config fields `remove_mode` (`auto`/`trash`/`permanent`, default `auto`) and `trash_max_size` (default `256MB`), with serde defaults and validation *(note: `Config::removal_policy` takes a per-run override. `parse_size` moved into core. Unit tests cover defaults, parsing and bad values.)*
+- [x] `safety::remove_with_policy(path, size, policy)` on top of `move_to_trash` and `delete_permanently`, with threshold unit tests *(note: `delete_permanently` now also refuses sync-managed paths.)*
+
+### Part A — Smarter target cleanup
+- [x] Check the real `.rustc_info.json` layout *(note: 2026-10-30. `outputs.<hash>.stdout` holds `rustc -vV` text with `release:`, `host:` and `commit-hash:` lines. One output entry is the `-vV` text; the other is the cfg dump and contains the toolchain path.)*
+- [x] `target::built_with(target_path)` parses `<target>/.rustc_info.json`, with a unit test on a literal sample *(note: a compiler counts as the same when the release matches and, if both sides know it, the commit hash. An unknown compiler is never stale.)*
+- [x] `installed_rustc_versions(rustup_home)` runs each toolchain's `rustc -vV` *(note: `toolchains.rs`. A toolchain whose rustc cannot run is left out. The fake-rustc test runs on Unix only.)*
+- [x] `--stale-toolchain` filter on `scan`, `list` and `compress`; `rustc` field in `scan --json` *(note: errors out when no toolchain is found, because an empty list would make every target look stale. `list` and `scan` gain a Rustc column.)*
+- [x] `prune.rs`: `PruneSpec::{Incremental, Profile}`, `plan()` sizes `<profile>/incremental` and `<triple>/<profile>/incremental`; skips busy and kept targets *(note: busy and kept targets are skipped by the CLI, which only passes `Done`, not-kept targets in.)*
+- [x] `rustvac prune [--incremental | --profile P] [--older-than] [--stale-toolchain] [--remove ...] [--dry-run] [--yes]` *(note: the age filter defaults to `older_than_days`, like compress.)*
+
+- [x] Stale dependency builds: `rustvac prune --stale-deps` (also in `sweep` and `check`). A unit is stale when its `.d` file names a registry crate version missing from the project's `Cargo.lock`. Its outputs (`.d`, `.rlib`, `.rmeta`, and so on, plus `.fingerprint/`) go together. *(note: checked on a scratch copy of this repo's build output: 261 stale units, all for old GUI and superseded versions, and a real removal left nothing stale. Limits: git checkouts are not classified, because their folder names carry no version. `build/` output for build scripts is not removed. A target outside its project is skipped, since other projects may share it. The repo's own `target/` was busy during the check, so it was not run directly.)*
+
+### Part B — Toolchains and caches
+- [x] `caches.rs`: `CacheItem` with tiers. Regenerable: rustup `tmp`, rustup `downloads`, cargo `registry/cache`, `registry/src`, `git/checkouts`. Managed: `toolchains/<name>`. Not in a default sweep: `registry/index`, `git/db` *(note: items hold their direct children, and removal works on those, so the folder itself stays.)*
+- [x] Guards: skip rustup `tmp`/`downloads` entries modified within `busy_grace_seconds`, `sync_managed` refusal, `long_path` *(note: the busy grace applies to every regenerable entry, not only rustup's, since a cargo build can be running too.)*
+- [x] Pure parser for `rustup toolchain list` (default and active markers); refuse the default toolchain
+- [x] `rustvac toolchains [--json]` and `rustvac toolchains rm <name> [--yes]`; report and do nothing if `rustup` is not on PATH *(note: removal not run against a real toolchain. Only the not-found path was run, against a scratch RUSTUP_HOME.)*
+- [x] `rustvac caches [--json]` and `rustvac caches clean [--rustup-tmp] [--rustup-downloads] [--cargo-registry] [--cargo-git] [--older-than] [--remove ...] [--dry-run] [--yes]` *(note: with no kind flags, `clean` clears every regenerable kind.)*
+- [x] `rustvac sweep [--dry-run] [--yes]`: one plan across stale-toolchain targets, incremental dirs and the regenerable tier, with one total *(note: targets from an uninstalled compiler go by the removal policy, not through the archive. They rebuild from scratch anyway.)*
+
+### Part C — Scheduled check and recommendations
+- [x] Free-space read for the home drive. `windows-sys` is already a Windows dependency with `Win32_Storage_FileSystem`, which covers `GetDiskFreeSpaceExW`. Unix needs `statvfs`, and `libc` is not a dependency yet, so check its licence (MIT/Apache-2.0) before adding it *(note: `libc` 0.2.191 is MIT OR Apache-2.0 and already in the lock file. The Unix `statvfs` path is not compiled on this machine.)*
+- [x] `rustvac check [--json]`: read-only; writes `~/.rustvac/recommendation.json` and a readable text form (free space, total reclaimable, top items by kind) *(note: also reports `compressible_bytes`, old targets that `compress` could archive. That figure is kept out of the sweep total.)*
+- [x] `rustvac schedule set --every daily|weekly [--at HH:MM] [--warn-below SIZE]`, `schedule status`, `schedule remove`. Windows: per-user `schtasks` task named `rustvac-check`. Linux and macOS: crontab entry marked `# rustvac`. Confirm before registering *(note: Windows checked by hand, see below. The crontab path is only covered by the pure-function tests. It has not been run.)*
+- [x] `rustvac status` (and a line at the top of `rustvac list`): last check time, free space, reclaimable, "run `rustvac sweep`" *(note: run on Windows against the real check report.)*
+- [x] Config fields `check_every` (default `off`) and `warn_below` *(note: `check_every` does not register anything. It makes `status` flag a check older than twice the interval.)*
+- [ ] Windows warning notification when free space is under `warn_below`. If unreliable, drop it and keep the report only *(note: implemented as a PowerShell toast, started by `check --notify`. 2026-10-30: it ran and exited 0, but nobody has confirmed that a toast appeared on screen. Left open until someone sees it. If it does not show, drop it as planned.)*
+- [x] The check never recommends something `sweep` would refuse (busy, `keep`, sync-managed) *(note: `check` and `sweep` share `sweep::plan`. A test covers kept targets.)*
+
+### Tests and docs
+- [x] Unit tests: `.rustc_info.json` parsing, `rustup toolchain list` parsing, removal-policy threshold, config validation, `schtasks` and crontab command lines (pure functions) *(note: 41 core unit tests, all passing on Windows.)*
+- [x] Extend `tests/support/mod.rs` to write `.rustc_info.json` and `incremental/` dirs; integration test with a fake rustup and cargo home in a tempdir (paths passed explicitly) *(note: `tests/cleanup.rs`, with tempdir homes.)*
+- [x] `check` test with an injected free-space value *(note: in `tests/cleanup.rs`. The real `disk_space` call has its own test on Windows.)*
+- [x] Hand check on Windows: create, `schedule status` and remove a real task; run `caches` and `toolchains` against the real folders and compare with Explorer *(note: 2026-10-30. A real `rustvac-check` task was created, queried (Task To Run was quoted correctly) and removed. `caches` and `toolchains` totals were compared with a PowerShell sum, not Explorer: checkouts 8,922 files / 261.8 MiB and toolchains 66,077 files / 1.3 GiB, both identical. The scheduled task runs a console program, so a window may flash.)*
+- [x] Removal run only against a scratch `RUSTUP_HOME` / `CARGO_HOME` first *(note: 2026-10-30. `sweep --yes --remove permanent` against a scratch tree: the six planned items were deleted, and `git/db`, `deps/` and `Cargo.toml` stayed. The Recycle Bin path was only run as a dry run.)*
+- [x] README (usage, config fields), CHANGELOG, and a Phase 9 summary here *(note: summary below.)*
+
+### GUI settings (2026-10-30)
+- [x] Settings dialog in the GUI: low disk space alert (any size, MB/GB/TB, or off), `remove_mode`, `trash_max_size`, `older_than_days`, `busy_grace_seconds`, `check_every`. `settings.set` validates the whole change before it writes, and saves with `Config::save` (comments in an existing `config.toml` are lost). A banner shows while free space on the home drive is under the alert size. Checked in the live window against a scratch config: banner shown at a 500 GB alert, then saved 1 GB, the file updated and the banner cleared. Unit test covers save, bad values and turning the alert off.
+- [ ] The alert is only shown while the GUI is open. Background alerts still come from `rustvac check --notify` (see the notification item above).
+
+### Phase 9 summary (2026-10-30)
+Built: `prune`, `toolchains`, `caches`, `sweep`, `check`, `status`, `schedule`, and `--stale-toolchain` on `scan`, `list` and `compress`. Core modules: `toolchains`, `prune`, `caches`, `sweep`, `check`, `schedule`. `cargo clippy -D warnings`, `cargo fmt`, `cargo deny check` (with `libc` added) and the whole test suite pass on Windows.
+
+Real-machine results (Windows): `sweep --dry-run` over `C:\Programming\2 WIP` found 6.8 GiB reclaimable, including 8 targets built by a compiler that rustup has since replaced. Nothing was removed from real folders.
+
+Not verified:
+- Linux and macOS. The Unix code (`statvfs`, crontab, the fake-rustc test) has not been compiled here. CI will be the first build.
+- The Windows toast (see above).
+- `toolchains rm` against a real toolchain, and the Recycle Bin path for cache removal.
+- The GUI has no Phase 9 features. It waits, as planned.
+
 ## Out of scope for v1 (do not schedule)
 
 - Dependency deduplication

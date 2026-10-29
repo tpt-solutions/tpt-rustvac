@@ -14,3 +14,14 @@ All notable changes are recorded here. The format follows
 - `rustvac-gui`: tree view in a tpt-shell window, with Rust Targets / Any Folder / Mixed modes,
   filters, keyboard shortcuts, and a two-step confirmation dialog. Windows only so far.
 - Release packaging through cargo-dist (Windows, macOS and Linux).
+- `rustvac scan|list|compress --stale-toolchain` and a `rustc` field in `scan --json`, read
+  from each target's `.rustc_info.json`.
+- `rustvac prune` for `incremental/` folders or a whole profile inside targets.
+- `rustvac toolchains` and `toolchains rm` (through rustup), and `rustvac caches` and
+  `caches clean` for rustup and cargo scratch.
+- `rustvac sweep`: one plan across old-compiler targets, incremental folders and caches.
+- `rustvac check`, `status` and `schedule set|status|remove`: a read-only drive check that
+  saves a recommendation, run on a schedule by `schtasks` or crontab. It never deletes.
+- Config: `remove_mode`, `trash_max_size`, `check_every`, `warn_below`.
+- `rustvac-gui`: a Settings dialog (low disk space alert size, cache removal mode and trash limit, age and busy limits, check frequency) that saves to `config.toml`, and a banner when free space on the home drive is under the alert size. `Config::save` writes the file; comments in an existing file are not kept.
+- `delete_permanently` now refuses sync-managed paths, as the trash does.
