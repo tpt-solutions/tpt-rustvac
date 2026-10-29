@@ -11,6 +11,7 @@ pub mod identity;
 pub mod model;
 pub mod safety;
 pub mod scan;
+pub mod schedule;
 pub mod target;
 pub mod walk;
 
