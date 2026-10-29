@@ -4,15 +4,18 @@
 //! thread and streams [`scan::ScanEvent`]s into an [`model::Arena`].
 
 pub mod archive;
+pub mod caches;
 pub mod config;
 pub mod error;
 pub mod filter;
 pub mod identity;
 pub mod model;
+pub mod prune;
 pub mod safety;
 pub mod scan;
 pub mod schedule;
 pub mod target;
+pub mod toolchains;
 pub mod walk;
 
 pub use error::{Error, Result};
