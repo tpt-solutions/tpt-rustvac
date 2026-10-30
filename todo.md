@@ -186,7 +186,7 @@ The GUI (`crates/tpt-rustvac-gui`) is a web UI hosted by [tpt-shell](../tpt-shel
 - [x] A scan root that is itself a project shows 0 targets. Decided: the scanner keeps its rule that a root holds projects. When the root has a `Cargo.toml` and the Rust Targets scan finds nothing, the page now says so and asks for the folder above the project. Verified on screen.
 - [x] Paths from a config root used forward slashes, and the children used backslashes. The root is now normalised on Windows.
 - [x] Sizes are on disk, on Windows *(note: decided and done. `identity::disk_bytes` uses `GetCompressedFileSizeW`. A cloud placeholder counts 0 bytes, and a compressed or sparse file counts its allocated size. Verified on `C:\Users\phill\ICB Construction`: 1.1 TiB before, 260 MiB after, with the same 417,885 files. Tests now take their expected sizes from the same function.)*
-- [ ] Sizes on Linux and macOS are still logical lengths. They should match Windows: allocated blocks (`blocks() * 512`). Changing them shifts the expected sizes in the tests, so it is a separate step. Also, the archive totals (`archive.rs`, `pack`) still use logical lengths.
+- [ ] Sizes on Linux and macOS are still logical lengths. They should match Windows: allocated blocks (`blocks() * 512`). Changing them shifts the expected sizes in the tests, so it is a separate step. Also, the archive totals (`archive.rs`, `pack`) still use logical lengths. *(note: 2026-10-31. Not changed. This machine has only the Windows Rust target installed, and the WSL distro that was used before is gone, so the Unix code can't be compiled or tested here. Do it with CI or a Linux machine.)*
 - [x] Trash and compress refuse sync-managed paths *(note: decided and done on Windows. A path is refused if it is under a OneDrive folder, or if it or any folder above it is a reparse point. That covers cloud sync folders, symlinks and junctions. The guard runs in `safety::move_to_trash`, in `archive::compress_and_vacuum`, and in the GUI's preview. Tested with a real junction in `tests/sync_guard.rs`. Linux and macOS have no such rule.)*
 
 ## Phase 9 — Toolchains, caches and scheduled checks (planned, CLI first)
@@ -279,7 +279,7 @@ Plan: `C:\Users\phill\.claude\plans\do-we-think-we-structured-lamport.md`. Aim: 
 
 ### Tests and docs
 - [x] Unit tests for the `wsl` glob logic; integration test in `tests/cleanup.rs` with a fake `LOCALAPPDATA` tempdir holding `Packages/X/LocalState/ext4.vhdx`.
-- [ ] Hand check on Windows: `rustvac disk` and `disk --json` against the real machine, compare vhdx sizes with Explorer; confirm the GUI panel matches the CLI. *(note: 2026-10-30. `rustvac disk` ran on the real machine. The Docker `ext4.vhdx` is 117,440,512 bytes, which is 112.0 MiB, the same as the report. That is the file size PowerShell reads, not Explorer's window. `disk --json` was not compared, and the GUI panel was not checked on screen.)*
+- [ ] Hand check on Windows: `rustvac disk` and `disk --json` against the real machine, compare vhdx sizes with Explorer; confirm the GUI panel matches the CLI. *(note: 2026-10-31. `disk --json` reports the Docker `ext4.vhdx` at 117,440,512 bytes, which is the length PowerShell reads for the same file. Explorer and the GUI panel on screen are still not checked. 2026-10-30. `rustvac disk` ran on the real machine. The Docker `ext4.vhdx` is 117,440,512 bytes, which is 112.0 MiB, the same as the report. That is the file size PowerShell reads, not Explorer's window. `disk --json` was not compared, and the GUI panel was not checked on screen.)*
 - [x] `cargo fmt --check`, `cargo clippy -D warnings` and the full test suite pass on Windows. *(note: 2026-10-31. Core and CLI clippy pass with `-D warnings`. The core test suite passes. The WSL code has not been built on Linux or macOS; CI is the first check there.)*
 - [x] README (section "Toolchains, caches and the small-drive routine"), the three CHANGELOGs, and a Phase 10 summary here.
 
@@ -313,45 +313,49 @@ Plan: `C:\Users\phill\.claude\plans\do-you-have-any-adaptive-quill.md`. Aim: mak
 
 Plan: `C:\Users\phill\.claude\plans\continue-bright-lemur.md`. Aim: a 125-target scan finishes sooner, the tree is not rebuilt after every action, and the GUI reopens where you left off. Reported while testing on the Open Source folder (stuck around 90/125 targets, and each Compress/Trash cleared and rescanned everything).
 
+Status (2026-10-31): the code is committed in `53b376c`, `4b67b7e`, `8bfea60`, `4167f96` and `bb8e7d2`. Still open: the timing, the on-screen check, and one deferred item.
+
 ### Speed (core)
-- [ ] `walk.rs` / `identity.rs` (Windows): stop opening every file twice. Call `GetCompressedFileSizeW` only for files whose attributes say compressed, sparse, reparse or offline/recall; otherwise use the logical length rounded up to the cluster size (read once per root). Cloud placeholders must still count 0 bytes.
-- [ ] Share one handle for the hardlink check and the size query where both are needed (`GetFileInformationByHandle` plus `FileStandardInfo` allocation size).
-- [ ] `scan.rs::run_rust_targets`: one rayon pool over targets with a serial walk per target, instead of a parallel walker inside each `par_iter` task (thread oversubscription). Keep `build_parallel` for `run_general`.
-- [ ] Emit each target's child folders and its project rollup as soon as it finishes, so the tree fills in during the scan instead of at the end.
-- [ ] Time `rustvac scan` on the Open Source folder before and after (release, warm). Totals and file counts must match, apart from the cluster rounding noted above.
+- [x] `walk.rs` / `identity.rs` (Windows): stop opening every file twice. *(note: an ordinary file's size is its length rounded up to the cluster size, with no extra call. Only compressed, sparse, reparse, offline and recall-flagged files call `GetCompressedFileSizeW`. Cloud placeholders still count 0 bytes. Tests: `round_to_cluster`, and the fixture tests, which take expected sizes from `disk_bytes`.)*
+- [ ] Share one handle for the hardlink check and the size query where both are needed. *(note: deferred. On Windows the hardlink check still opens each file once, because the link count needs a handle. Only the rare probe files open twice. Sharing one handle would mean getting the allocation from `FileStandardInfo` instead of `GetCompressedFileSizeW`, which changes the numbers the Phase 8 check verified. That needs a before and after comparison on real trees first.)*
+- [x] `scan.rs::run_rust_targets`: one rayon pool over targets with a serial walk per target. *(note: `measure_tree_serial` is used for Rust targets. `measure_tree` stays for general mode.)*
+- [x] Emit each target's child folders and its project rollup as soon as it finishes. *(note: each target sends its own children when measured. A project's rollup goes out when its last target is done. Child ids are handed out under the same lock as their `Discovered` event, because the arena appends in event order. The existing integration test checks project and child sizes and passes.)*
+- [ ] Time `rustvac scan` on the Open Source folder before and after. *(note: not measured. The "before" build (`b441584`) had run for over 21 minutes on the full folder without finishing, and was stopped. The repo's own root has a `Cargo.toml`, so the scanner reports no targets there, and that run was discarded. A bounded tree is needed for a fair before and after comparison.)*
 
 ### No rescan after an action (GUI)
-- [ ] `Arena::remove_subtree(id)` in core: unlink from the parent and subtract size and files from every ancestor.
-- [ ] `poll_work`: on success remove the target in place, drop it from `checked`, mark the view dirty. Failed items stay in the tree and stay checked.
-- [ ] `state_get` no longer calls `start_scan()` when work finishes. Status line reads "Done: N of M succeeded."
+- [x] `Arena::remove_subtree(id)` in core: unlink from the parent and subtract size and files from every ancestor. *(note: `model.rs`, with four unit tests. A project left with no targets is removed too.)*
+- [x] `poll_work`: on success remove the target in place, drop it from `checked`, mark the view dirty. Failed items stay in the tree and stay checked. *(note: `poll_work` calls `remove_subtree`. The on-screen check is still open under Tests and docs.)*
+- [x] `state_get` no longer calls `start_scan()` when work finishes. Status line reads "Done: N of M succeeded." *(note: `commands.rs` `state_get` does not start a scan. The status text is in `model.rs` `poll_work`.)*
 
 ### Quiet background refresh (GUI)
-- [ ] `Model::refresh_scan()`: scan into a separate arena without clearing the visible one, hide the progress bar, then swap on `Finished` and restore `checked`, `selected` and `toggled` by path (ids change).
-- [ ] Rescan button uses it; a "Refresh in background" setting turns it on or off.
+- [x] `Model::refresh_scan()`: scan into a separate arena without clearing the visible one, hide the progress bar, then swap on `Finished` and restore `checked`, `selected` and `toggled` by path (ids change). *(note: `model.rs` `refresh_scan` and `finish_refresh`.)*
+- [x] Rescan button uses it; a "Refresh in background" setting turns it on or off. *(note: `commands.rs` uses `refresh_scan` when `refresh_in_background` is set. The setting is saved through `settings.set`.)*
 
 ### Remember the last session (GUI)
-- [ ] `ui_state.json` beside `config.toml` (so `config.toml` comments are never rewritten): `mode`, `root`, up to 10 `recent_roots` (most recent first, no duplicates, existing folders only), `min_age_days`, `min_size_mb`, `hide_archived`, `sort_desc`. The folder is created on first save, so no installer is needed.
-- [ ] Load in `Model::new`; fall back to the config's first root when the saved one is gone. Save after a successful `scan.start` and when a filter changes. Errors never block the UI.
-- [ ] `recentRoots` in `snapshot()`; folder box in the page offers the recent folders and scans the one picked. Startup scan uses the remembered mode and folder.
-- [ ] Unit test: save/load round trip in a tempdir, missing-root fallback, recent list cap and de-duplication.
+- [x] `ui_state.json` beside `config.toml` (so `config.toml` comments are never rewritten): `mode`, `root`, up to 10 `recent_roots` (most recent first, no duplicates, existing folders only), `min_age_days`, `min_size_mb`, `hide_archived`, `sort_desc`. The folder is created on first save, so no installer is needed. *(note: `ui_state.rs`.)*
+- [x] Load in `Model::new`; fall back to the config's first root when the saved one is gone. Save after a successful `scan.start` and when a filter changes. Errors never block the UI. *(note: `UiState::usable_root` handles the fallback. `save_session` runs from `model.rs` and from the filter command. Save errors are ignored.)*
+- [x] `recentRoots` in `snapshot()`; folder box in the page offers the recent folders and scans the one picked. Startup scan uses the remembered mode and folder. *(note: the page merges `recentRoots` into the folder list in `app.js`.)*
+- [x] Unit test: save/load round trip in a tempdir, missing-root fallback, recent list cap and de-duplication. *(note: four tests in `ui_state.rs`.)*
 
 ### Tests and docs
-- [ ] Hand check on Windows: tick two targets, Move to Trash, rows vanish with no progress bar, other checks and selection kept, project and root sizes drop correctly. Rescan gives the same totals. Close and reopen: same mode, folder and filters.
-- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, full test suite.
-- [ ] CHANGELOGs (core, gui) and a README line on background refresh and remembered folders.
+- [ ] Hand check on Windows: tick two targets, Move to Trash, rows vanish with no progress bar, other checks and selection kept, project and root sizes drop correctly. Rescan gives the same totals. Close and reopen: same mode, folder and filters. *(note: not run. It needs the window on screen.)*
+- [x] `cargo fmt --check`, `cargo clippy -D warnings`, full test suite. *(note: 2026-10-31, all pass on Windows.)*
+- [x] CHANGELOGs (core, gui) and a README line on background refresh and remembered folders. *(note: README has the `refresh_in_background` config line and a `ui_state.json` paragraph.)*
 
 ## Lightweight invariant checks (instead of Kani)
 
 Kani is not used in this repo (only in tpt-acoustics, Linux-only CI). These checks run in plain `cargo test` on Windows, with no CBMC toolchain. Bounded exhaustive enumeration over small generated cases, plus proptest for random sizes and names.
 
-- [ ] Add `proptest` as a dev-dependency of `tpt-rustvac-core` and create `crates/tpt-rustvac-core/tests/invariants.rs`.
-- [ ] Sweep planner (`sweep::plan`): never plans a path outside the scan roots or cache homes; `total_size()` equals the sum of item sizes; kept, busy and sync-managed targets only appear in `skipped`.
-- [ ] Cache planner (`caches::plan_clean`): only `Tier::Regenerable` kinds are ever planned, whatever `spec.kinds` holds; with `older_than` set, an entry of unknown age is never planned; busy entries are always skipped. Enumerate every `CacheKind` x tier x age x busy combination.
-- [ ] `RemoveMode::auto`: trash vs permanent depends only on the size threshold, and is monotonic in size (once permanent, larger is permanent).
-- [ ] Archive: pack, verify and restore give an identical manifest; the original is removed only after verify succeeds (inject a corrupt archive and confirm the original stays).
-- [ ] Disk (`disk::build`): `regenerable_bytes` is the sum of regenerable items only, and the alert thresholds are monotonic in free space.
-- [ ] Each invariant test fails when its guard is deliberately broken in a scratch edit (check once, do not commit the breakage).
-- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, full test suite; CHANGELOG line for core.
+Status (2026-10-31): `crates/tpt-rustvac-core/tests/invariants.rs`, seven tests, all passing.
+
+- [x] Add `proptest` as a dev-dependency of `tpt-rustvac-core` and create `crates/tpt-rustvac-core/tests/invariants.rs`. *(note: `proptest` 1.11.0. `cargo deny check` passes.)*
+- [x] Sweep planner (`sweep::plan`): never plans a path outside the scan roots or cache homes; `total_size()` equals the sum of item sizes; kept, busy and sync-managed targets only appear in `skipped`. *(note: `sweep_plan_respects_roots_keep_busy_and_stale`. Sync-managed paths are not generated, because they need OneDrive or reparse points. Those are still covered only by the existing sync guard tests.)*
+- [x] Cache planner (`caches::plan_clean`): only `Tier::Regenerable` kinds are ever planned, whatever `spec.kinds` holds; with `older_than` set, an entry of unknown age is never planned; busy entries are always skipped. Enumerate every `CacheKind` x tier x age x busy combination. *(note: `cache_planner_is_exact_over_kind_age_and_busy`, every kind, three ages and both age rules.)*
+- [x] `RemoveMode::auto`: trash vs permanent depends only on the size threshold, and is monotonic in size (once permanent, larger is permanent). *(note: `auto_removal_is_monotonic_in_size`. It also checks the threshold itself: `trash_max` is trashed and one byte more is deleted.)*
+- [ ] Archive: pack, verify and restore give an identical manifest; the original is removed only after verify succeeds (inject a corrupt archive and confirm the original stays). *(note: the round trip is tested (`pack_verify_restore_round_trip`), and a truncated archive fails verify (`a_truncated_archive_fails_verification`). The injection part is open. `pack` verifies before it returns, and `compress_and_vacuum` trashes only after `pack` returns Ok. That ordering holds by reading the code. A test would need a seam in `archive.rs` that does not exist yet.)*
+- [x] Disk (`disk::build`): `regenerable_bytes` is the sum of regenerable items only, and the alert thresholds are monotonic in free space. *(note: `disk_report_regenerable_bytes_is_the_sum_of_regenerable_items` and `low_space_alert_is_monotonic_in_free_space`.)*
+- [ ] Each invariant test fails when its guard is deliberately broken in a scratch edit (check once, do not commit the breakage). *(note: six of seven guard families checked, each by a scratch edit and then `git checkout`. Cache tier guard, sweep busy arm, auto threshold, alert comparison, disk regenerable filter and stale-target detection each made the matching test fail. The archive verify guard is not broken yet.)*
+- [x] `cargo fmt --check`, `cargo clippy -D warnings`, full test suite; CHANGELOG line for core. *(note: 2026-10-31.)*
 
 ## Out of scope for v1 (do not schedule)
 
