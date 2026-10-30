@@ -6,7 +6,14 @@ All notable changes to this crate are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- On Windows a plain file's size comes from its length, rounded up to the cluster size, with no extra open. Only compressed, sparse, reparse, offline and recall-flagged files ask `GetCompressedFileSizeW`. Cluster size is read once per volume.
+- Rust-target scans measure each target on its own worker, with no nested parallel walk.
+- `Arena::remove_subtree` takes a node out of the tree and fixes its ancestors' totals, without a rescan.
+
 ### Added
+- `tests/invariants.rs`: cache planner enumerated over every kind, age and busy case; proptest checks for the sweep planner (roots, kept, busy, stale), the auto removal threshold, the disk report's regenerable total, the low-space alert, and pack/verify/restore round trips.
+- `config.refresh_in_background` (default `false`), for the GUI's Rescan.
 - `wsl` (find and size `ext4.vhdx` disks from the registry and `%LOCALAPPDATA%`, plus manual compact steps as text) and `disk` (one report over caches, toolchains and WSL). `CacheKind::RustupUpdateHashes`, `toolchains::last_used`, and a `wsl` field on `check::Recommendation` that older saved reports load without.
 - Stale-dependency pruning (`prune::plan_stale_deps`): finds build units whose `.d` file names
   a registry crate version that is not in `Cargo.lock`. Removal takes every output of the unit.

@@ -8,5 +8,9 @@ All notable changes to this crate are recorded here. The format follows
 
 ### Added
 - A Disk health panel (`disk.refresh`): rustup, toolchain, cargo and WSL/Docker disk sizes with next steps. WSL disks have Reveal and the manual compact steps, and no delete button. Measured on a background thread.
+- A targets-only table in Rust Targets mode, with a "Select all targets" box and a targets-only checkbox. Row checkboxes are larger.
+- Compress and Move to Trash remove the finished rows in place. The tree is not rescanned, and checks on the other rows are kept.
+- Rescan can refresh in the background (`refresh_in_background` in config). The visible tree stays on screen and keeps checks and selection.
+- The window remembers its last mode, folder, recent folders and filters in `ui_state.json`.
 - Tree view in a tpt-shell window with Rust Targets / Any Folder / Mixed modes, filters,
   keyboard shortcuts, and a two-step confirmation dialog. Windows only so far.

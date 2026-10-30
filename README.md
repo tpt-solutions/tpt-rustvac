@@ -108,11 +108,16 @@ remove_mode = "auto"        # auto | trash | permanent, for caches, incremental/
 trash_max_size = "256MB"    # auto: up to this goes to the trash, larger is deleted permanently
 check_every = "off"         # off | daily | weekly. `rustvac status` flags a check that is overdue
 warn_below = "50GB"         # warn when free space on the home drive is under this
+refresh_in_background = false  # GUI Rescan refreshes in place and keeps checks and selection
 ```
 
 `auto` exists because the Recycle Bin is on the same drive: trashing a large cache frees
 nothing. Override it per run with `--remove auto|trash|permanent`. `RUSTUP_HOME` and
 `CARGO_HOME` are honoured, and default to `~/.rustup` and `~/.cargo`.
+
+The GUI also remembers its last mode, folder, up to ten recent folders and filters, in
+`ui_state.json` beside `config.toml`. The file is created on first save. A missing or broken
+file gives the defaults, and the window never waits on it.
 
 ## Building
 
