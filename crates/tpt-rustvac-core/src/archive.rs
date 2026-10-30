@@ -166,6 +166,17 @@ pub fn remove_slug(archive_dir: &Path, slug: &str) -> Result<Vec<PathBuf>> {
 /// Packs `target` into the vacuum, verifies the result, and returns the report.
 /// Does not remove the original. See [`compress_and_vacuum`] for that.
 pub fn pack(target: &Path, project: &Path, archive_dir: &Path) -> Result<PackReport> {
+    pack_checked(target, project, archive_dir, verify)
+}
+
+/// `pack` with the check that runs on the written archive passed in. Tests use it to make the
+/// check fail. The archive is removed when the check fails, and `pack` returns an error.
+fn pack_checked(
+    target: &Path,
+    project: &Path,
+    archive_dir: &Path,
+    check: impl FnOnce(&Path) -> Result<Manifest>,
+) -> Result<PackReport> {
     let target_abs = absolute(target);
     let archive_abs = absolute(archive_dir);
     if archive_abs.starts_with(&target_abs) {
@@ -195,7 +206,7 @@ pub fn pack(target: &Path, project: &Path, archive_dir: &Path) -> Result<PackRep
 
     fs::rename(long_path(&partial), long_path(&final_path))
         .map_err(|e| Error::io(&final_path, e))?;
-    let verified = match verify(&final_path) {
+    let verified = match check(&final_path) {
         Ok(m) => m,
         Err(e) => {
             let _ = fs::remove_file(long_path(&final_path));
@@ -526,6 +537,29 @@ mod tests {
         );
         assert_eq!(parse_archive_name("notes.txt"), None);
         assert_eq!(parse_archive_name("slug-2026.tar.zst"), None);
+    }
+
+    /// `compress_and_vacuum` trashes the original only after `pack` returns Ok, so a failed
+    /// check must give an error, no archive, and an untouched target.
+    #[test]
+    fn a_failed_check_keeps_the_target_and_leaves_no_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        let target = project.join("target");
+        fs::create_dir_all(target.join("debug")).unwrap();
+        fs::write(target.join("debug/a.bin"), vec![1u8; 1000]).unwrap();
+        let archive_dir = dir.path().join("archive");
+
+        let result = pack_checked(&target, &project, &archive_dir, |path| {
+            Err(Error::Verify {
+                path: path.to_path_buf(),
+                reason: "injected for the test".into(),
+            })
+        });
+
+        assert!(result.is_err());
+        assert!(target.join("debug/a.bin").is_file());
+        assert_eq!(fs::read_dir(&archive_dir).unwrap().count(), 0);
     }
 
     #[test]
