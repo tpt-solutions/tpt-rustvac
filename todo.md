@@ -301,13 +301,14 @@ Plan: `C:\Users\phill\.claude\plans\do-you-have-any-adaptive-quill.md`. Aim: mak
 - [x] Unit test: two projects in an arena give a flat view with only target rows, sorted by size. *(note: the test covers the order and the filter result passed in. The age, size and search filters run in `rebuild_view`, which needs a full `Model` and is not unit-tested.)*
 - [ ] Hand check on Windows in all three modes: checkboxes, Select all, Compress and Move to Trash act on the right rows. *(note: not run. The GUI has not been opened for this change.)*
 
-### Further ideas (not yet decided)
-- [ ] Select-all box compares against the actionable count, not `state.targets`, so archived, busy or kept targets don't leave it half-ticked.
-- [ ] Status bar shows "N checked · X reclaimable".
-- [ ] Shift-click range select.
-- [ ] Quick-check presets: older than N days, larger than N MB, not archived.
-- [ ] Action buttons show the count they act on, e.g. "Move to Trash (3)".
-- [ ] Esc or Ctrl+Shift+A clears all checks.
+### Further ideas (decided 2026-10-31, built, not yet seen on screen)
+- [x] Select-all box compares against the actionable count, not `state.targets`, so archived, busy or kept targets don't leave it half-ticked. *(note: the snapshot sends `actionableCount` and `checkedActionable` from `Model::check_summary`.)*
+- [x] Status bar shows "N checked · X reclaimable". *(note: `checkedBytes` counts only the checked targets that can be acted on.)*
+- [x] Shift-click range select. *(note: `node.check_range` checks the actionable targets between the last plain click and the shift-clicked row, in table order. Shift-click on a checkbox does not toggle it.)*
+- [x] Quick-check presets: older than N days, larger than N MB, not archived. *(note: a "Check by rule…" menu with 30 and 90 days, 100 MB and 1 GB, and not archived. `node.check_where` replaces the checks. Unit test `check_rules_match_on_age_size_and_archive`.)*
+- [x] Action buttons show the count they act on, e.g. "Move to Trash (3)". *(note: the count is the checked rows, or else the selected one.)*
+- [x] Esc or Ctrl+Shift+A clears all checks. *(note: Ctrl+A checks every actionable target, as before.)*
+- [ ] Hand check on Windows in all three modes: checkboxes, Select all, Compress and Move to Trash act on the right rows. *(note: not run. Needs the window on screen. The new range and preset actions should be checked the same way.)*
 
 ## Phase 12 — Faster scans, quiet refresh, remembered session (2026-10-30)
 
