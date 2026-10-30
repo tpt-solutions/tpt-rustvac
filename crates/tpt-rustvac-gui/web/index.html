@@ -25,7 +25,15 @@
       <label>Min size <input id="min-size" type="number" min="0" step="1" value="0"> MB</label>
       <label class="check"><input id="hide-archived" type="checkbox"> Hide archived</label>
       <label class="check" title="Show only the targets, as a flat table with full paths"><input id="targets-only" type="checkbox"> Targets only</label>
-      <label class="select-all" title="Check every target that can be removed  ( Ctrl+A )"><input id="check-all" type="checkbox"> Select all targets</label>
+      <label class="select-all" title="Check every target that can be removed  ( Ctrl+A ). Ctrl+Shift+A or Esc clears the checks. Shift-click checks a range."><input id="check-all" type="checkbox"> Select all targets</label>
+      <select id="preset" aria-label="Check targets by a rule" title="Replaces the checks with the targets that match">
+        <option value="">Check by rule…</option>
+        <option value="older30">Older than 30 days</option>
+        <option value="older90">Older than 90 days</option>
+        <option value="over100">Larger than 100 MB</option>
+        <option value="over1024">Larger than 1 GB</option>
+        <option value="notarchived">Not archived</option>
+      </select>
       <button type="button" id="sort" title="Toggle size sort  ( s )">Size ↓</button>
     </div>
     <button type="button" id="open-disk" title="Rustup, cargo and WSL disk sizes">Disk health</button>
@@ -64,6 +72,7 @@
     </div>
     <span class="grow"></span>
     <span id="stat-targets"></span>
+    <span id="stat-checked"></span>
     <span id="stat-reclaim"></span>
     <span id="stat-last"></span>
     <details id="failures" class="failures" hidden>

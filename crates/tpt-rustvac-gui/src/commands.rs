@@ -11,7 +11,7 @@ use tpt_rustvac_core::config::{default_config_path, Config, RemoveMode};
 use tpt_rustvac_core::model::{Kind, Node, NodeId, State};
 use tpt_shell::{App, CommandError, Target};
 
-use crate::model::{self, ActionKind, Item, Mode, Model};
+use crate::model::{self, ActionKind, CheckRule, Item, Mode, Model};
 
 /// The app state. Commands run on the UI thread; work threads only send messages.
 pub type Shared = Arc<Mutex<Model>>;
@@ -60,6 +60,18 @@ pub fn register(app: App, model: &Shared) -> App {
         "fs.read",
         no_target,
         handler(model, node_check_all),
+    )
+    .command(
+        "node.check_range",
+        "fs.read",
+        no_target,
+        handler(model, node_check_range),
+    )
+    .command(
+        "node.check_where",
+        "fs.read",
+        no_target,
+        handler(model, node_check_where),
     )
     .command(
         "action.prepare",
@@ -221,6 +233,7 @@ fn snapshot(m: &Model) -> Value {
         value["id"] = json!(id.0);
         Some(value)
     });
+    let (actionable, checked_actionable, checked_bytes) = m.check_summary();
     let failures: Vec<String> = m
         .failures
         .iter()
@@ -248,6 +261,9 @@ fn snapshot(m: &Model) -> Value {
         "lastScan": m.last_scan_millis(),
         "targets": m.target_count(),
         "reclaimable": m.reclaimable_bytes(),
+        "actionableCount": actionable,
+        "checkedActionable": checked_actionable,
+        "checkedBytes": checked_bytes,
         "failures": failures,
         "failureCount": m.failures.len(),
         "configError": m.config_error,
@@ -489,6 +505,45 @@ fn node_check_all(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
     } else {
         m.checked.clear();
     }
+    Ok(json!({}))
+}
+
+/// Checks the actionable targets between two visible rows, inclusive, in either order. Shift-click
+/// uses this. Rows that cannot be acted on are not checked.
+fn node_check_range(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
+    let rows: Vec<NodeId> = m.rows.iter().map(|row| row.id).collect();
+    let position =
+        |key: &str| -> Result<usize, CommandError> {
+            let id =
+                NodeId(args[key].as_u64().ok_or_else(|| {
+                    CommandError::new("RUSTVAC_BAD_ARGS", &format!("missing {key}"))
+                })? as usize);
+            rows.iter().position(|row| *row == id).ok_or_else(|| {
+                CommandError::new("RUSTVAC_UNKNOWN_NODE", "that row is not in the table")
+            })
+        };
+    let (from, to) = (position("from")?, position("to")?);
+    let actionable: std::collections::HashSet<NodeId> =
+        m.actionable_targets().into_iter().collect();
+    for id in &rows[from.min(to)..=from.max(to)] {
+        if actionable.contains(id) {
+            m.checked.insert(*id);
+        }
+    }
+    Ok(json!({}))
+}
+
+/// Replaces the checks with the actionable targets that match a quick-check preset.
+fn node_check_where(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
+    let rule = CheckRule {
+        older_than_days: args["olderThanDays"].as_u64(),
+        larger_than_bytes: args["largerThanMb"].as_u64().map(|mb| mb * 1024 * 1024),
+        not_archived: args["notArchived"].as_bool().unwrap_or(false),
+    };
+    m.checked = m
+        .checkable_matching(&rule, SystemTime::now())
+        .into_iter()
+        .collect();
     Ok(json!({}))
 }
 

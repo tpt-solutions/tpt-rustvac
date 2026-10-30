@@ -604,6 +604,31 @@ impl Model {
             .sum()
     }
 
+    /// The actionable targets that match `rule`, in the order the table shows them.
+    pub fn checkable_matching(&self, rule: &CheckRule, now: SystemTime) -> Vec<NodeId> {
+        self.actionable_targets()
+            .into_iter()
+            .filter(|id| {
+                self.arena
+                    .get(*id)
+                    .is_some_and(|node| rule.matches(node, now))
+            })
+            .collect()
+    }
+
+    /// `(actionable targets, checked targets that can be acted on, bytes those would free)`.
+    /// The select-all box and the status line both read this.
+    pub fn check_summary(&self) -> (usize, usize, u64) {
+        let actionable: HashSet<NodeId> = self.actionable_targets().into_iter().collect();
+        let mut checked = 0;
+        let mut bytes = 0;
+        for id in self.checked.iter().filter(|id| actionable.contains(id)) {
+            checked += 1;
+            bytes += self.arena.get(*id).map_or(0, |node| node.size);
+        }
+        (actionable.len(), checked, bytes)
+    }
+
     pub fn target_count(&self) -> usize {
         self.arena.iter().filter(|n| is_rust_target(n)).count()
     }
@@ -767,6 +792,35 @@ fn native_separators(path: PathBuf) -> PathBuf {
     }
 }
 
+/// A quick-check preset. A target matches when it meets every rule that is set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CheckRule {
+    /// The newest file is at least this many days old. Unknown age never matches.
+    pub older_than_days: Option<u64>,
+    /// At least this many bytes on disk.
+    pub larger_than_bytes: Option<u64>,
+    /// Leave archived targets out.
+    pub not_archived: bool,
+}
+
+impl CheckRule {
+    pub fn matches(&self, node: &Node, now: SystemTime) -> bool {
+        if let Some(days) = self.older_than_days {
+            let age = node.newest.and_then(|t| now.duration_since(t).ok());
+            if !age.is_some_and(|age| age >= Duration::from_secs(days * 86_400)) {
+                return false;
+            }
+        }
+        if self
+            .larger_than_bytes
+            .is_some_and(|bytes| node.size < bytes)
+        {
+            return false;
+        }
+        !(self.not_archived && node.state == State::Archived)
+    }
+}
+
 pub fn is_rust_target(node: &Node) -> bool {
     node.kind == Kind::Target || node.is_target
 }
@@ -867,5 +921,40 @@ mod tests {
             .map(|r| r.id)
             .collect();
         assert_eq!(ids, [big]);
+    }
+
+    #[test]
+    fn check_rules_match_on_age_size_and_archive() {
+        let (mut arena, [small, big]) = two_projects();
+        let now = SystemTime::now();
+        let day = Duration::from_secs(86_400);
+        arena.get_mut(small).unwrap().newest = Some(now - 40 * day);
+        arena.get_mut(big).unwrap().newest = None;
+        arena.get_mut(big).unwrap().state = State::Archived;
+        let (small, big) = (arena.get(small).unwrap(), arena.get(big).unwrap());
+
+        let older = CheckRule {
+            older_than_days: Some(30),
+            ..Default::default()
+        };
+        assert!(older.matches(small, now));
+        // Unknown age never counts as old enough.
+        assert!(!older.matches(big, now));
+
+        let larger = CheckRule {
+            larger_than_bytes: Some(100),
+            ..Default::default()
+        };
+        assert!(!larger.matches(small, now));
+        assert!(larger.matches(big, now));
+
+        let live = CheckRule {
+            not_archived: true,
+            ..Default::default()
+        };
+        assert!(live.matches(small, now));
+        assert!(!live.matches(big, now));
+
+        assert!(CheckRule::default().matches(big, now));
     }
 }

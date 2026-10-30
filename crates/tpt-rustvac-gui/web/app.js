@@ -17,6 +17,7 @@
     treePane: $("tree-pane"),
     nameHead: $("name-head"),
     checkAll: $("check-all"),
+    preset: $("preset"),
     sort: $("sort"),
     notice: $("notice"),
     tree: $("tree"),
@@ -30,6 +31,7 @@
     progress: $("progress"),
     progressFill: $("progress-fill"),
     targets: $("stat-targets"),
+    checkedStat: $("stat-checked"),
     reclaim: $("stat-reclaim"),
     last: $("stat-last"),
     failures: $("failures"),
@@ -305,8 +307,10 @@
     // Any Folder has no targets to list, so the flat table is not offered there.
     els.targetsOnly.checked = state.targetsOnly;
     els.targetsOnly.disabled = state.mode === "any";
-    const checkedCount = state.checked.length;
-    els.checkAll.checked = checkedCount > 0 && checkedCount >= state.targets;
+    // Compared with the targets that can be acted on, so a busy or kept target never leaves
+    // the box half-ticked.
+    const checkedCount = state.checkedActionable;
+    els.checkAll.checked = checkedCount > 0 && checkedCount >= state.actionableCount;
     els.checkAll.indeterminate = checkedCount > 0 && !els.checkAll.checked;
     els.sort.textContent = state.sortDesc ? "Size ↓" : "Size ↑";
   }
@@ -424,7 +428,12 @@
     els.progress.classList.toggle("indeterminate", !known);
     els.progressFill.style.width = known ? `${(done / total) * 100}%` : "";
     els.targets.textContent = `${state.targets} targets`;
+    els.checkedStat.textContent = `${state.checked.length} checked · ${human(state.checkedBytes)} reclaimable`;
     els.reclaim.textContent = `Reclaimable ${human(state.reclaimable)}`;
+    // The buttons say how many they will act on: the checked rows, or else the selected one.
+    const acting = actionIds().length;
+    els.compress.textContent = acting ? `Compress (${acting})` : "Compress";
+    els.trash.textContent = acting ? `Move to Trash (${acting})` : "Move to Trash";
     els.last.textContent =
       state.lastScan === null
         ? "No scan yet"
@@ -662,18 +671,40 @@
     send("node.check_all", { on: els.checkAll.checked });
   });
 
+  // Each rule replaces the checks, so a preset is never added on top of an old selection.
+  const PRESETS = {
+    older30: { olderThanDays: 30 },
+    older90: { olderThanDays: 90 },
+    over100: { largerThanMb: 100 },
+    over1024: { largerThanMb: 1024 },
+    notarchived: { notArchived: true },
+  };
+  els.preset.addEventListener("change", () => {
+    const rule = PRESETS[els.preset.value];
+    els.preset.value = "";
+    if (rule) send("node.check_where", rule);
+  });
+
   els.sort.addEventListener("click", () => {
     send("view.set", { sortDesc: !state.sortDesc });
   });
 
+  // The row the last plain click landed on. Shift-click checks from there to the clicked row.
+  let anchorId = null;
   els.tree.addEventListener("click", (event) => {
     const row = event.target.closest(".row");
     if (!row) return;
     const id = Number(row.dataset.id);
-    if (event.target.dataset.act === "expand") {
+    const act = event.target.dataset.act;
+    if (act === "expand") {
       send("node.expand", { id });
-    } else if (event.target.dataset.act !== "check") {
-      send("node.select", { id });
+    } else if (event.shiftKey && anchorId !== null) {
+      // Stop a checkbox toggling by itself. The range command sets the checks.
+      event.preventDefault();
+      send("node.check_range", { from: anchorId, to: id });
+    } else {
+      anchorId = id;
+      if (act !== "check") send("node.select", { id });
     }
   });
 
@@ -749,7 +780,10 @@
     const id = selectedId();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
-      send("node.check_all", { on: true });
+      // Ctrl+A checks every target that can be acted on. Ctrl+Shift+A clears the checks.
+      send("node.check_all", { on: !event.shiftKey });
+    } else if (event.key === "Escape" && state.checked.length > 0) {
+      send("node.check_all", { on: false });
     } else if (event.key === "/") {
       event.preventDefault();
       els.search.focus();
