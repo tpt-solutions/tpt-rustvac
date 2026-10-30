@@ -17,7 +17,7 @@ use rayon::prelude::*;
 
 use crate::model::{Arena, Kind, NodeId, State};
 use crate::target::{resolve_target_dir, TargetEnv};
-use crate::walk::{is_busy, is_excluded, measure_tree, Agg, WalkOpts};
+use crate::walk::{is_busy, is_excluded, measure_tree, measure_tree_serial, Agg, WalkOpts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScanMode {
@@ -353,7 +353,7 @@ fn run_rust_targets(req: &ScanRequest, emit: &Emitter) {
             if emit.is_cancelled() {
                 return None;
             }
-            let measured = measure_tree(target_path, &opts);
+            let measured = measure_tree_serial(target_path, &opts);
             let agg = measured.total(target_path);
             let busy = is_busy(agg.newest, now, req.busy_grace);
             let root_error = measured

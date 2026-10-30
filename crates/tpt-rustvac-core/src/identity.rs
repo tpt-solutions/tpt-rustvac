@@ -21,8 +21,83 @@ pub fn hardlink_identity(path: &Path, md: &Metadata) -> Option<(u64, u64)> {
 /// and a sparse or compressed file takes its allocated size. On Windows this is the allocated
 /// size from `GetCompressedFileSizeW`. Elsewhere it is the logical length, for now (see todo.md,
 /// Phase 8, "Sizes are logical").
+///
+/// On Windows an ordinary file costs no extra open. Its length is rounded up to the volume's
+/// cluster size, which is what the allocation is for a plain file. Only a file whose
+/// attributes say it may differ (see [`SIZE_NEEDS_PROBE`]) asks `GetCompressedFileSizeW`.
 #[cfg(windows)]
 pub fn disk_bytes(path: &Path, md: &Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    if md.file_attributes() & SIZE_NEEDS_PROBE == 0 {
+        return round_to_cluster(md.len(), cluster_size(path));
+    }
+    probe_allocated(path, md)
+}
+
+/// Attributes that mean the allocated size can differ from the length: compressed (0x800),
+/// sparse (0x200), reparse point (0x400, which includes OneDrive placeholders), offline (0x1000),
+/// and recall on open or on data access (0x40000, 0x400000).
+#[cfg(windows)]
+const SIZE_NEEDS_PROBE: u32 = 0x800 | 0x200 | 0x400 | 0x1000 | 0x40000 | 0x400000;
+
+/// The allocation `length` takes when rounded up to whole clusters. Zero stays zero.
+pub fn round_to_cluster(length: u64, cluster: u64) -> u64 {
+    if length == 0 || cluster == 0 {
+        return length;
+    }
+    length.div_ceil(cluster) * cluster
+}
+
+/// The cluster size of the volume `path` is on, read once per volume. Falls back to 4 KiB.
+#[cfg(windows)]
+fn cluster_size(path: &Path) -> u64 {
+    use std::collections::HashMap;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<OsString, u64>>> = OnceLock::new();
+    let key = path
+        .components()
+        .next()
+        .map(|c| c.as_os_str().to_os_string())
+        .unwrap_or_default();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(size) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return *size;
+    }
+    let size = query_cluster_size(path).unwrap_or(4096);
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, size);
+    size
+}
+
+#[cfg(windows)]
+fn query_cluster_size(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceW;
+
+    // The volume root, such as `C:\`. Any path on the volume gives the same answer.
+    let root = path.ancestors().last()?;
+    let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    let (mut sectors, mut bytes, mut free, mut total) = (0u32, 0u32, 0u32, 0u32);
+    // SAFETY: `wide` is a valid, NUL-terminated UTF-16 string that outlives the call, and every
+    // out-pointer is a valid local.
+    let ok = unsafe {
+        GetDiskFreeSpaceW(
+            wide.as_ptr(),
+            &mut sectors,
+            &mut bytes,
+            &mut free,
+            &mut total,
+        )
+    };
+    (ok != 0).then(|| sectors as u64 * bytes as u64)
+}
+
+#[cfg(windows)]
+fn probe_allocated(path: &Path, md: &Metadata) -> u64 {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetCompressedFileSizeW;
 
@@ -87,5 +162,19 @@ pub fn hardlink_identity(path: &Path, _md: &Metadata) -> Option<(u64, u64)> {
         }
         let index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
         Some((info.dwVolumeSerialNumber as u64, index))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::round_to_cluster;
+
+    #[test]
+    fn lengths_round_up_to_whole_clusters() {
+        assert_eq!(round_to_cluster(0, 4096), 0);
+        assert_eq!(round_to_cluster(1, 4096), 4096);
+        assert_eq!(round_to_cluster(4096, 4096), 4096);
+        assert_eq!(round_to_cluster(4097, 4096), 8192);
+        assert_eq!(round_to_cluster(10, 0), 10);
     }
 }

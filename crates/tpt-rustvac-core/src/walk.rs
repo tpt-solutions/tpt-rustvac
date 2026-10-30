@@ -129,7 +129,41 @@ pub fn measure_tree(root: &Path, opts: &WalkOpts) -> Measured {
         })
     });
 
-    let cancelled = opts.cancel.load(Ordering::Relaxed);
+    finish(shared, opts.cancel.load(Ordering::Relaxed))
+}
+
+/// The same totals as [`measure_tree`], walked on the calling thread. A scan that measures
+/// many targets at once uses this, so each walk stays on its own worker and the threads are
+/// not multiplied.
+pub fn measure_tree_serial(root: &Path, opts: &WalkOpts) -> Measured {
+    let shared = Shared::default();
+    let patterns = Arc::new(opts.exclude.clone());
+
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .standard_filters(false)
+        .hidden(false)
+        .follow_links(opts.follow_links)
+        .same_file_system(!opts.cross_device)
+        .filter_entry(move |e| !is_excluded(&patterns, e.path()));
+
+    {
+        let mut local = Local {
+            map: HashMap::new(),
+            shared: &shared,
+        };
+        for result in builder.build() {
+            if opts.cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            visit(&mut local, result);
+        }
+        // `local` merges its totals into `shared` when it is dropped here.
+    }
+    finish(shared, opts.cancel.load(Ordering::Relaxed))
+}
+
+fn finish(shared: Shared, cancelled: bool) -> Measured {
     let mut dirs: BTreeMap<PathBuf, Agg> = shared
         .dirs
         .into_inner()
