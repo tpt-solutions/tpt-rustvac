@@ -313,16 +313,19 @@ fn run_rust_targets(req: &ScanRequest, emit: &Emitter) {
         let en = env.clone();
         builder.filter_entry(move |e| discover_filter(e, &f, &ex, &en));
 
-        for result in builder.build() {
-            if emit.is_cancelled() {
-                break;
-            }
-            match result {
-                Ok(_) => {}
-                Err(e) => emit.failed(root.clone(), e.to_string()),
-            }
-            flush_discoveries(&found, emit, &mut next_id, &mut targets);
-        }
+        // The walk runs on every core. `discover_filter` records projects under the lock, and
+        // the events go out after the walk, sorted by project path, so ids stay in order.
+        builder.build_parallel().run(|| {
+            Box::new(|result: Result<ignore::DirEntry, ignore::Error>| {
+                if emit.is_cancelled() {
+                    return ignore::WalkState::Quit;
+                }
+                if let Err(e) = result {
+                    emit.failed(root.clone(), e.to_string());
+                }
+                ignore::WalkState::Continue
+            })
+        });
         flush_discoveries(&found, emit, &mut next_id, &mut targets);
     }
 
@@ -459,7 +462,9 @@ fn flush_discoveries(
     next_id: &mut usize,
     targets: &mut Vec<PendingTarget>,
 ) {
-    let pending = std::mem::take(&mut found.lock().unwrap_or_else(|e| e.into_inner()).pending);
+    let mut pending = std::mem::take(&mut found.lock().unwrap_or_else(|e| e.into_inner()).pending);
+    // The parallel walk finds projects in no fixed order. Sorting keeps the ids the same each run.
+    pending.sort_by(|a, b| a.project.cmp(&b.project));
     for item in pending {
         let project_id = NodeId(*next_id);
         *next_id += 1;
