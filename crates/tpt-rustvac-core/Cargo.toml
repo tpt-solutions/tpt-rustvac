@@ -31,4 +31,5 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 libc = "0.2.191"
 
 [dev-dependencies]
+proptest = "1.11.0"
 tempfile = "3.27.0"
