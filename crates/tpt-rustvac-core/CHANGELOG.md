@@ -7,6 +7,7 @@ All notable changes to this crate are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `wsl` (find and size `ext4.vhdx` disks from the registry and `%LOCALAPPDATA%`, plus manual compact steps as text) and `disk` (one report over caches, toolchains and WSL). `CacheKind::RustupUpdateHashes`, `toolchains::last_used`, and a `wsl` field on `check::Recommendation` that older saved reports load without.
 - Stale-dependency pruning (`prune::plan_stale_deps`): finds build units whose `.d` file names
   a registry crate version that is not in `Cargo.lock`. Removal takes every output of the unit.
   Included in `sweep` and `check`.

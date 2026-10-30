@@ -56,11 +56,22 @@ rustvac schedule remove
 when it runs. `--notify` (added to the task when you give `--warn-below`) shows a Windows
 notification when free space is under the limit. Elsewhere only the report is written.
 
+`rustvac disk` is a read-only overview: rustup scratch, toolchains, cargo and WSL/Docker
+virtual disks (`ext4.vhdx`), each with a suggested next step. `--json` adds the exact steps for
+each WSL disk. WSL disks only grow, even after you delete files inside them. rustvac prints
+the manual compact steps (`wsl --shutdown`, then `Optimize-VHD` or `diskpart`) and never runs
+them. The GUI has the same report under Disk health. WSL discovery is Windows-only.
+
+```
+rustvac disk
+rustvac disk --json
+```
+
 What a sweep touches:
 
 | Tier | Items | How |
 | --- | --- | --- |
-| Regenerable | rustup `tmp` and `downloads`, cargo `registry/cache`, `registry/src`, `git/checkouts`, `incremental/` folders, targets from an uninstalled rustc | Trash or permanent delete, by `remove_mode` |
+| Regenerable | rustup `tmp`, `downloads` and `update-hashes`, cargo `registry/cache`, `registry/src`, `git/checkouts`, `incremental/` folders, targets from an uninstalled rustc | Trash or permanent delete, by `remove_mode` |
 | Managed | `toolchains/<name>` | Only through `rustup toolchain uninstall`. The default toolchain is refused. |
 | Manual | `registry/index`, `git/db` | Listed, never in a sweep. They need the network to rebuild. |
 

@@ -7,6 +7,7 @@ All notable changes are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- `rustvac disk`: one read-only report of rustup, cargo and WSL/Docker virtual disk sizes, with a next step for each group. WSL disks are report only; the manual compact steps are printed, never run. `check` and `status` mention WSL disks, `rustup update-hashes` joins the regenerable caches, and the toolchain list shows when each folder last changed. The GUI has a Disk health panel.
 - `tpt-rustvac-core`: flat-arena data model, streaming scan engine, Rust target discovery
   with `CARGO_TARGET_DIR` and `.cargo/config.toml` resolution, general folder measurement,
   hardlink dedup, `.tar.zst` archives with verification, restore, and config loading.

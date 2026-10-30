@@ -253,6 +253,106 @@ Not verified:
 - `toolchains rm` against a real toolchain, and the Recycle Bin path for cache removal.
 - The GUI has no Phase 9 features. It waits, as planned.
 
+## Phase 10 — One-stop disk health: rustup, cargo and WSL sizes (planned)
+
+Plan: `C:\Users\phill\.claude\plans\do-we-think-we-structured-lamport.md`. Aim: one read-only `rustvac disk` report (CLI and GUI) showing rustup, cargo and WSL sizes together, each with a suggested next step. Nothing here deletes or compacts a WSL disk.
+
+### Decisions
+- [x] WSL and Docker virtual disks (`ext4.vhdx`) are report-only. rustvac prints the manual compact steps (`wsl --shutdown`, `Optimize-VHD` or `diskpart`) and never runs them, like `check` recommends but never deletes.
+
+### Core
+- [x] `wsl.rs`: `WslDisk { name, path, size_bytes, kind }` (`Distro` / `Docker`); pure `discover(local_app_data)` globbing `Packages/*/LocalState/ext4.vhdx` and `Docker/wsl/**/ext4.vhdx`; size from file metadata. Only the `%LOCALAPPDATA%` lookup is `#[cfg(windows)]`, so it compiles on every CI platform.
+- [x] Distro names and custom `wsl --import` locations from `HKCU\...\Lxss` (`DistributionName`, `BasePath`) on Windows, falling back to the package folder name.
+- [x] `wsl::compact_hint(&WslDisk)`: the manual steps as text only.
+- [x] `caches.rs`: add `CacheKind::RustupUpdateHashes` (regenerable, label, `discover`); update `sweep.rs` (`From<CacheKind>`, `SweepPlan::by_kind`) or map it to `None`.
+- [x] Toolchain `last_used` (directory mtime) in the toolchain listing so old toolchains stand out.
+- [x] `disk.rs`: `DiskReport { rustup, toolchains, cargo, wsl, free_bytes }` built from `caches::discover`, `toolchains`, `wsl::discover` and `check::disk_space`.
+- [x] `check::Recommendation` gains `wsl` with `#[serde(default)]`, so an old saved `recommendation.json` still loads.
+
+### CLI
+- [x] `rustvac disk [--json]`: grouped Rustup / Cargo / WSL table, free-space line, one next step per group.
+- [x] WSL line in `monitor::render_report`, so `check` and `status` mention it.
+
+### GUI
+- [x] `disk.refresh` read command (`fs.read`) and a `disk` field in `snapshot()`.
+- [x] "Disk health" panel in `web/index.html` / `app.js`, with Reveal for each WSL disk and no delete buttons for WSL. *(note: built and wired. Not yet seen on screen.)*
+
+### Tests and docs
+- [x] Unit tests for the `wsl` glob logic; integration test in `tests/cleanup.rs` with a fake `LOCALAPPDATA` tempdir holding `Packages/X/LocalState/ext4.vhdx`.
+- [ ] Hand check on Windows: `rustvac disk` and `disk --json` against the real machine, compare vhdx sizes with Explorer; confirm the GUI panel matches the CLI. *(note: 2026-10-30. `rustvac disk` ran on the real machine. The Docker `ext4.vhdx` is 117,440,512 bytes, which is 112.0 MiB, the same as the report. That is the file size PowerShell reads, not Explorer's window. `disk --json` was not compared, and the GUI panel was not checked on screen.)*
+- [x] `cargo fmt --check`, `cargo clippy -D warnings` and the full test suite pass on Windows. *(note: 2026-10-31. Core and CLI clippy pass with `-D warnings`. The core test suite passes. The WSL code has not been built on Linux or macOS; CI is the first check there.)*
+- [x] README (section "Toolchains, caches and the small-drive routine"), the three CHANGELOGs, and a Phase 10 summary here.
+
+Phase 10 summary (2026-10-31): `rustvac disk` shows rustup, toolchains, cargo and WSL/Docker disks, each with a next step. WSL disks are report-only, and the manual compact steps are printed, never run. `check`, `status` and the GUI show the same report. Open: the GUI panel on screen, `disk --json` against the real machine, and the Linux and macOS build.
+
+## Phase 11 — GUI selection and table view (2026-10-30)
+
+Plan: `C:\Users\phill\.claude\plans\do-you-have-any-adaptive-quill.md`. Aim: make it quick to pick which targets to remove.
+
+### Done
+- [x] Larger row checkboxes (20 px) and taller rows, in `web/style.css`.
+- [x] "Select all targets" checkbox in the filter bar, using the existing `node.check_all` command (Ctrl+A already did the same). *(note: not run in the GUI yet.)*
+
+### Targets-only table view
+- [x] `targets_only` in `Model` (default on in Rust Targets mode, off in Any Folder and Mixed); `rebuild_view` builds a flat list of visible targets, sorted like the tree, with a shared comparator. *(note: `target_rows` and `size_order` in `model.rs`. The mode default is set in `scan_start`.)*
+- [x] `targetsOnly` accepted by `view_set` and sent in `snapshot()`. *(note: the snapshot also sends `flatTargets`, which is true only when the table is actually shown.)*
+- [x] Table rows in `app.js`: project name, full path, size, bar, age; no caret. Header labels switch to match. *(note: the name and path stack in one cell, so the path is not a separate grid column.)*
+- [x] "Targets only" checkbox in the filter bar; disabled in Any Folder mode. The path truncates at the start so the end of the path stays visible. *(note: CSS right-to-left truncation, not a grid column. The narrow-width override still hides only the fifth column, so the table keeps its layout at small widths.)*
+- [x] Unit test: two projects in an arena give a flat view with only target rows, sorted by size. *(note: the test covers the order and the filter result passed in. The age, size and search filters run in `rebuild_view`, which needs a full `Model` and is not unit-tested.)*
+- [ ] Hand check on Windows in all three modes: checkboxes, Select all, Compress and Move to Trash act on the right rows. *(note: not run. The GUI has not been opened for this change.)*
+
+### Further ideas (not yet decided)
+- [ ] Select-all box compares against the actionable count, not `state.targets`, so archived, busy or kept targets don't leave it half-ticked.
+- [ ] Status bar shows "N checked · X reclaimable".
+- [ ] Shift-click range select.
+- [ ] Quick-check presets: older than N days, larger than N MB, not archived.
+- [ ] Action buttons show the count they act on, e.g. "Move to Trash (3)".
+- [ ] Esc or Ctrl+Shift+A clears all checks.
+
+## Phase 12 — Faster scans, quiet refresh, remembered session (2026-10-30)
+
+Plan: `C:\Users\phill\.claude\plans\continue-bright-lemur.md`. Aim: a 125-target scan finishes sooner, the tree is not rebuilt after every action, and the GUI reopens where you left off. Reported while testing on the Open Source folder (stuck around 90/125 targets, and each Compress/Trash cleared and rescanned everything).
+
+### Speed (core)
+- [ ] `walk.rs` / `identity.rs` (Windows): stop opening every file twice. Call `GetCompressedFileSizeW` only for files whose attributes say compressed, sparse, reparse or offline/recall; otherwise use the logical length rounded up to the cluster size (read once per root). Cloud placeholders must still count 0 bytes.
+- [ ] Share one handle for the hardlink check and the size query where both are needed (`GetFileInformationByHandle` plus `FileStandardInfo` allocation size).
+- [ ] `scan.rs::run_rust_targets`: one rayon pool over targets with a serial walk per target, instead of a parallel walker inside each `par_iter` task (thread oversubscription). Keep `build_parallel` for `run_general`.
+- [ ] Emit each target's child folders and its project rollup as soon as it finishes, so the tree fills in during the scan instead of at the end.
+- [ ] Time `rustvac scan` on the Open Source folder before and after (release, warm). Totals and file counts must match, apart from the cluster rounding noted above.
+
+### No rescan after an action (GUI)
+- [ ] `Arena::remove_subtree(id)` in core: unlink from the parent and subtract size and files from every ancestor.
+- [ ] `poll_work`: on success remove the target in place, drop it from `checked`, mark the view dirty. Failed items stay in the tree and stay checked.
+- [ ] `state_get` no longer calls `start_scan()` when work finishes. Status line reads "Done: N of M succeeded."
+
+### Quiet background refresh (GUI)
+- [ ] `Model::refresh_scan()`: scan into a separate arena without clearing the visible one, hide the progress bar, then swap on `Finished` and restore `checked`, `selected` and `toggled` by path (ids change).
+- [ ] Rescan button uses it; a "Refresh in background" setting turns it on or off.
+
+### Remember the last session (GUI)
+- [ ] `ui_state.json` beside `config.toml` (so `config.toml` comments are never rewritten): `mode`, `root`, up to 10 `recent_roots` (most recent first, no duplicates, existing folders only), `min_age_days`, `min_size_mb`, `hide_archived`, `sort_desc`. The folder is created on first save, so no installer is needed.
+- [ ] Load in `Model::new`; fall back to the config's first root when the saved one is gone. Save after a successful `scan.start` and when a filter changes. Errors never block the UI.
+- [ ] `recentRoots` in `snapshot()`; folder box in the page offers the recent folders and scans the one picked. Startup scan uses the remembered mode and folder.
+- [ ] Unit test: save/load round trip in a tempdir, missing-root fallback, recent list cap and de-duplication.
+
+### Tests and docs
+- [ ] Hand check on Windows: tick two targets, Move to Trash, rows vanish with no progress bar, other checks and selection kept, project and root sizes drop correctly. Rescan gives the same totals. Close and reopen: same mode, folder and filters.
+- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, full test suite.
+- [ ] CHANGELOGs (core, gui) and a README line on background refresh and remembered folders.
+
+## Lightweight invariant checks (instead of Kani)
+
+Kani is not used in this repo (only in tpt-acoustics, Linux-only CI). These checks run in plain `cargo test` on Windows, with no CBMC toolchain. Bounded exhaustive enumeration over small generated cases, plus proptest for random sizes and names.
+
+- [ ] Add `proptest` as a dev-dependency of `tpt-rustvac-core` and create `crates/tpt-rustvac-core/tests/invariants.rs`.
+- [ ] Sweep planner (`sweep::plan`): never plans a path outside the scan roots or cache homes; `total_size()` equals the sum of item sizes; kept, busy and sync-managed targets only appear in `skipped`.
+- [ ] Cache planner (`caches::plan_clean`): only `Tier::Regenerable` kinds are ever planned, whatever `spec.kinds` holds; with `older_than` set, an entry of unknown age is never planned; busy entries are always skipped. Enumerate every `CacheKind` x tier x age x busy combination.
+- [ ] `RemoveMode::auto`: trash vs permanent depends only on the size threshold, and is monotonic in size (once permanent, larger is permanent).
+- [ ] Archive: pack, verify and restore give an identical manifest; the original is removed only after verify succeeds (inject a corrupt archive and confirm the original stays).
+- [ ] Disk (`disk::build`): `regenerable_bytes` is the sum of regenerable items only, and the alert thresholds are monotonic in free space.
+- [ ] Each invariant test fails when its guard is deliberately broken in a scratch edit (check once, do not commit the breakage).
+- [ ] `cargo fmt --check`, `cargo clippy -D warnings`, full test suite; CHANGELOG line for core.
+
 ## Out of scope for v1 (do not schedule)
 
 - Dependency deduplication
