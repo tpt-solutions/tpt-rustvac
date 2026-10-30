@@ -3,6 +3,7 @@
 
 mod commands;
 mod model;
+mod ui_state;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

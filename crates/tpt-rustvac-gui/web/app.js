@@ -13,6 +13,10 @@
     minAge: $("min-age"),
     minSize: $("min-size"),
     hideArchived: $("hide-archived"),
+    targetsOnly: $("targets-only"),
+    treePane: $("tree-pane"),
+    nameHead: $("name-head"),
+    checkAll: $("check-all"),
     sort: $("sort"),
     notice: $("notice"),
     tree: $("tree"),
@@ -53,7 +57,14 @@
     trashUnit: $("set-trash-unit"),
     older: $("set-older"),
     busy: $("set-busy"),
+    refreshBg: $("set-refresh-bg"),
     checkEvery: $("set-check-every"),
+    openDisk: $("open-disk"),
+    disk: $("disk"),
+    diskSpace: $("disk-space"),
+    diskBody: $("disk-body"),
+    diskRefresh: $("disk-refresh"),
+    diskClose: $("disk-close"),
   };
 
   // The last state the app sent. Null until the first answer arrives.
@@ -106,7 +117,7 @@
 
   async function loop() {
     await pull();
-    const busy = state && (state.scanning || state.working);
+    const busy = state && (state.scanning || state.refreshing || state.working || state.disk.loading);
     setTimeout(loop, busy ? 250 : 1000);
   }
 
@@ -186,7 +197,97 @@
     renderTree(state.rows);
     renderDetails();
     renderStatus();
+    renderDisk();
     showNotice();
+  }
+
+  // ---- disk health --------------------------------------------------------------------
+
+  function diskGroup(title, bytes, rows, step) {
+    const group = el("section", "disk-group");
+    const head = el("h3", "", title);
+    head.append(el("span", "num", human(bytes)));
+    group.append(head);
+    for (const row of rows) {
+      const line = el("div", "disk-row");
+      line.append(el("span", "", row.label));
+      if (row.note) line.append(el("span", "muted", row.note));
+      line.append(el("span", "num", human(row.bytes)));
+      if (row.path && row.reveal) {
+        const button = el("button", "", "Reveal");
+        button.type = "button";
+        button.addEventListener("click", () => send("path.reveal", { path: row.path }));
+        line.append(button);
+      }
+      group.append(line);
+    }
+    if (step) group.append(el("p", "disk-step", `Next: ${step}`));
+    return group;
+  }
+
+  function renderDisk() {
+    if (!els.disk.open) return;
+    const { loading, report } = state.disk;
+    els.diskRefresh.disabled = loading;
+    if (!report) {
+      els.diskSpace.textContent = "";
+      els.diskBody.replaceChildren(el("p", "muted", "Measuring…"));
+      return;
+    }
+    els.diskSpace.textContent =
+      report.free_bytes === null
+        ? "Free space on the home drive is unknown."
+        : `Free space on the home drive: ${human(report.free_bytes)} of ${human(report.total_bytes)}${loading ? " (refreshing…)" : ""}`;
+    const steps = report.nextSteps;
+    const sum = (rows, key) => rows.reduce((total, row) => total + row[key], 0);
+    const groups = [
+      diskGroup("Rustup scratch", sum(report.rustup, "bytes"), report.rustup, steps.rustup),
+      diskGroup(
+        "Toolchains",
+        sum(report.toolchains, "bytes"),
+        report.toolchains.map((t) => ({
+          label: t.name,
+          bytes: t.bytes,
+          note: t.last_used_unix === null ? "" : `changed ${new Date(t.last_used_unix * 1000).toLocaleDateString()}`,
+        })),
+        steps.toolchains,
+      ),
+      diskGroup(
+        "Cargo",
+        sum(report.cargo, "bytes"),
+        report.cargo.map((c) => ({
+          label: c.label,
+          bytes: c.bytes,
+          note: c.tier === "regenerable" ? "" : "not part of a sweep",
+        })),
+        steps.cargo,
+      ),
+    ];
+    if (report.wsl.length === 0) {
+      groups.push(el("p", "muted", "No WSL or Docker disks found."));
+    } else {
+      groups.push(
+        diskGroup(
+          "WSL and Docker disks (report only)",
+          sum(report.wsl, "size_bytes"),
+          report.wsl.map((w) => ({
+            label: w.name,
+            bytes: w.size_bytes,
+            path: w.path,
+            reveal: true,
+            note: w.kind,
+          })),
+          steps.wsl,
+        ),
+      );
+      for (const compact of report.wslCompact) {
+        const details = el("details", "disk-compact");
+        details.append(el("summary", "", `Compact steps for ${compact.path}`));
+        details.append(el("pre", "", compact.steps));
+        groups.push(details);
+      }
+    }
+    els.diskBody.replaceChildren(...groups);
   }
 
   function renderToolbar() {
@@ -194,18 +295,26 @@
       button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode));
     }
     if (document.activeElement !== els.root) els.root.value = state.root;
-    els.roots.replaceChildren(
-      ...state.roots.map((path) => el("option", "", path)),
-    );
+    // Configured roots first, then folders scanned before, without repeats.
+    const folders = [...new Set([...state.roots, ...state.recentRoots])];
+    els.roots.replaceChildren(...folders.map((path) => el("option", "", path)));
     if (document.activeElement !== els.search) els.search.value = state.query;
     if (document.activeElement !== els.minAge) els.minAge.value = state.minAgeDays;
     if (document.activeElement !== els.minSize) els.minSize.value = state.minSizeMb;
     els.hideArchived.checked = state.hideArchived;
+    // Any Folder has no targets to list, so the flat table is not offered there.
+    els.targetsOnly.checked = state.targetsOnly;
+    els.targetsOnly.disabled = state.mode === "any";
+    const checkedCount = state.checked.length;
+    els.checkAll.checked = checkedCount > 0 && checkedCount >= state.targets;
+    els.checkAll.indeterminate = checkedCount > 0 && !els.checkAll.checked;
     els.sort.textContent = state.sortDesc ? "Size ↓" : "Size ↑";
   }
 
   function renderTree(rows) {
     const max = rows.reduce((top, row) => Math.max(top, row.size), 1);
+    els.treePane.classList.toggle("table", state.flatTargets);
+    els.nameHead.textContent = state.flatTargets ? "Project" : "Name";
     const fragment = document.createDocumentFragment();
     for (const row of rows) fragment.append(rowElement(row, max));
     els.tree.replaceChildren(fragment);
@@ -247,6 +356,14 @@
     if (row.state === "archived") name.append(el("span", "badge", "archived"));
     if (row.state === "busy") name.append(el("span", "badge", "busy"));
 
+    // In the table the full path sits under the project name. It is cut at the start, so
+    // the end of the path, where the folder name is, stays visible.
+    let cell = name;
+    if (state.flatTargets) {
+      cell = el("div", "cell");
+      cell.append(name, el("div", "path", row.path));
+    }
+
     const size = el("div", "size", human(row.size));
     const bar = el("div", "bar");
     const fill = el("i");
@@ -255,7 +372,7 @@
 
     const age = el("div", `num ${ageClass(row.ageDays)}`, ageText(row.ageDays));
 
-    line.append(caret, check, name, size, bar, age);
+    line.append(caret, check, cell, size, bar, age);
     return line;
   }
 
@@ -298,7 +415,9 @@
         ? known
           ? `Scanning ${done}/${total} targets`
           : "Scanning…"
-        : "Ready";
+        : state.refreshing
+          ? "Refreshing in the background…"
+          : "Ready";
     }
     els.status.textContent = text;
     els.progress.hidden = !(state.scanning || state.working);
@@ -348,6 +467,7 @@
     els.trashUnit.value = trash.unit;
     els.older.value = s.olderThanDays;
     els.busy.value = s.busyGraceSeconds;
+    els.refreshBg.checked = !!s.refreshInBackground;
     els.checkEvery.value = s.checkEvery;
     els.settingsPath.textContent = s.configPath ? `Saved to ${s.configPath}` : "";
     els.settingsError.hidden = true;
@@ -372,6 +492,7 @@
       trashMaxSize: joinSize(els.trashN.value || "0", els.trashUnit.value),
       olderThanDays: Math.max(0, Math.floor(Number(els.older.value) || 0)),
       busyGraceSeconds: Math.max(1, Math.floor(Number(els.busy.value) || 0)),
+      refreshInBackground: els.refreshBg.checked,
       checkEvery: els.checkEvery.value,
     };
     try {
@@ -533,6 +654,14 @@
     send("view.set", { hideArchived: els.hideArchived.checked });
   });
 
+  els.targetsOnly.addEventListener("change", () => {
+    send("view.set", { targetsOnly: els.targetsOnly.checked });
+  });
+
+  els.checkAll.addEventListener("change", () => {
+    send("node.check_all", { on: els.checkAll.checked });
+  });
+
   els.sort.addEventListener("click", () => {
     send("view.set", { sortDesc: !state.sortDesc });
   });
@@ -592,6 +721,13 @@
     fillSettings();
     els.settings.showModal();
   });
+  els.openDisk.addEventListener("click", () => {
+    els.disk.showModal();
+    renderDisk();
+    send("disk.refresh");
+  });
+  els.diskRefresh.addEventListener("click", () => send("disk.refresh"));
+  els.diskClose.addEventListener("click", () => els.disk.close());
   els.settingsForm.addEventListener("submit", saveSettings);
   els.settingsCancel.addEventListener("click", () => els.settings.close());
   els.warnOn.addEventListener("change", syncSettings);
@@ -605,7 +741,7 @@
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") hideMenu();
-    if (els.confirm.open || els.settings.open) return;
+    if (els.confirm.open || els.settings.open || els.disk.open) return;
     if (event.target.matches("input, textarea")) {
       if (event.key === "Escape") event.target.blur();
       return;

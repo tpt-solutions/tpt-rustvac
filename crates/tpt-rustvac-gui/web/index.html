@@ -24,17 +24,20 @@
       <label>Min age <input id="min-age" type="number" min="0" step="1" value="0"> days</label>
       <label>Min size <input id="min-size" type="number" min="0" step="1" value="0"> MB</label>
       <label class="check"><input id="hide-archived" type="checkbox"> Hide archived</label>
+      <label class="check" title="Show only the targets, as a flat table with full paths"><input id="targets-only" type="checkbox"> Targets only</label>
+      <label class="select-all" title="Check every target that can be removed  ( Ctrl+A )"><input id="check-all" type="checkbox"> Select all targets</label>
       <button type="button" id="sort" title="Toggle size sort  ( s )">Size ↓</button>
     </div>
+    <button type="button" id="open-disk" title="Rustup, cargo and WSL disk sizes">Disk health</button>
     <button type="button" id="open-settings" title="Settings">Settings</button>
   </header>
 
   <div id="notice" class="notice" hidden></div>
 
   <main class="panes">
-    <section class="tree-pane" aria-label="Folders">
+    <section id="tree-pane" class="tree-pane" aria-label="Folders">
       <div class="tree-head">
-        <span></span><span></span><span>Name</span><span class="num">Size</span><span></span><span class="num">Age</span>
+        <span></span><span></span><span id="name-head">Name</span><span class="num">Size</span><span></span><span class="num">Age</span>
       </div>
       <div id="tree" class="tree" role="tree" tabindex="0"></div>
       <p id="empty" class="empty" hidden></p>
@@ -89,6 +92,21 @@
     </form>
   </dialog>
 
+  <dialog id="disk">
+    <div class="disk-panel">
+      <h2>Disk health</h2>
+      <p id="disk-space" class="muted"></p>
+      <div id="disk-body"></div>
+      <p class="muted">This panel only reports. It never deletes anything, and it never
+        compacts a WSL disk. Clearing caches is done with <code>rustvac caches clean</code>
+        or <code>rustvac sweep</code>.</p>
+      <div class="dialog-buttons">
+        <button type="button" id="disk-refresh">Refresh</button>
+        <button type="button" id="disk-close" class="primary">Close</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="settings">
     <form id="settings-form" method="dialog">
       <h2>Settings</h2>
@@ -131,6 +149,7 @@
         <legend>Scanning</legend>
         <label>Treat a target as old after <input id="set-older" type="number" min="0" step="1"> days</label>
         <label>Treat a target as busy if changed within <input id="set-busy" type="number" min="1" step="1"> seconds</label>
+        <label class="check"><input id="set-refresh-bg" type="checkbox"> Rescan in the background, keeping checks and selection</label>
         <label>Scheduled check
           <select id="set-check-every">
             <option value="off">Off</option>

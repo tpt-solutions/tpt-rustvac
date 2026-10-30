@@ -80,6 +80,12 @@ pub fn register(app: App, model: &Shared) -> App {
         handler(model, settings_set),
     )
     .command(
+        "disk.refresh",
+        "fs.read",
+        no_target,
+        handler(model, disk_refresh),
+    )
+    .command(
         "path.reveal",
         "fs.read",
         path_target,
@@ -176,9 +182,8 @@ fn parse_kind(name: &str) -> Result<ActionKind, CommandError> {
 /// Advances the scan and the work threads, then returns the state the page draws.
 fn state_get(m: &mut Model, _: &Value) -> Result<Value, CommandError> {
     m.poll_scan();
-    if m.poll_work() {
-        m.start_scan();
-    }
+    m.poll_disk();
+    m.poll_work();
     if m.view_dirty {
         m.rebuild_view();
     }
@@ -232,7 +237,11 @@ fn snapshot(m: &Model) -> Value {
         "minSizeMb": m.min_size_mb,
         "hideArchived": m.hide_archived,
         "sortDesc": m.sort_desc,
+        "targetsOnly": m.targets_only,
+        "flatTargets": m.flat_targets(),
         "scanning": m.scanning,
+        "refreshing": m.refreshing,
+        "recentRoots": m.ui.recent_roots.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         "progress": { "done": m.progress.0, "total": m.progress.1 },
         "working": m.is_busy_working(),
         "status": m.status,
@@ -244,6 +253,7 @@ fn snapshot(m: &Model) -> Value {
         "configError": m.config_error,
         "settings": settings_json(&m.config),
         "space": space_json(m),
+        "disk": disk_json(m),
         "rows": rows,
         "rowsTruncated": m.rows.len() > MAX_ROWS,
         "checked": checked,
@@ -252,10 +262,34 @@ fn snapshot(m: &Model) -> Value {
     })
 }
 
+/// The disk-health panel's data. `report` is null until the first refresh finishes.
+fn disk_json(m: &Model) -> Value {
+    use tpt_rustvac_core::wsl;
+    let report = m.disk.as_ref().map(|d| {
+        let mut value = serde_json::to_value(&d.report).unwrap_or(Value::Null);
+        value["nextSteps"] = serde_json::to_value(&d.steps).unwrap_or(Value::Null);
+        value["wslCompact"] = Value::Array(
+            d.report
+                .wsl
+                .iter()
+                .map(|w| json!({ "path": w.path.display().to_string(), "steps": wsl::compact_hint(w) }))
+                .collect(),
+        );
+        value
+    });
+    json!({ "loading": m.disk_loading(), "report": report })
+}
+
+fn disk_refresh(m: &mut Model, _: &Value) -> Result<Value, CommandError> {
+    m.refresh_disk();
+    Ok(json!({}))
+}
+
 fn settings_json(c: &Config) -> Value {
     json!({
         "warnBelow": c.warn_below,
         "checkEvery": c.check_every,
+        "refreshInBackground": c.refresh_in_background,
         "removeMode": remove_mode_name(c.remove_mode),
         "trashMaxSize": c.trash_max_size,
         "olderThanDays": c.older_than_days,
@@ -300,6 +334,9 @@ fn settings_set(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
     }
     if let Some(v) = args["checkEvery"].as_str() {
         next.check_every = v.to_string();
+    }
+    if let Some(v) = args["refreshInBackground"].as_bool() {
+        next.refresh_in_background = v;
     }
     if let Some(v) = args["removeMode"].as_str() {
         next.remove_mode = v.parse().map_err(bad)?;
@@ -378,9 +415,21 @@ fn scan_start(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
             "that path is not a folder",
         ));
     }
+    // Rescan with the setting on keeps the tree, its checks and its selection. Anything else
+    // starts from an empty tree.
+    let same_place = m.mode == mode && m.root == root;
+    let refresh =
+        same_place && m.config.refresh_in_background && !m.arena.is_empty() && !m.scanning;
     m.mode = mode;
     m.root = root;
-    m.start_scan();
+    // The flat table is the default for Rust targets only.
+    m.targets_only = mode == Mode::RustTargets;
+    if refresh {
+        m.refresh_scan();
+    } else {
+        m.start_scan();
+    }
+    m.note_scan_started();
     Ok(json!({}))
 }
 
@@ -400,7 +449,11 @@ fn view_set(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
     if let Some(desc) = args["sortDesc"].as_bool() {
         m.sort_desc = desc;
     }
+    if let Some(on) = args["targetsOnly"].as_bool() {
+        m.targets_only = on;
+    }
     m.view_dirty = true;
+    m.save_session();
     Ok(json!({}))
 }
 
@@ -504,10 +557,10 @@ fn pick_folder(_: Option<PathBuf>) -> Result<Option<PathBuf>, CommandError> {
 /// Opens Explorer with the item selected. Only paths that are in the scan are accepted.
 fn path_reveal(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
     let path = PathBuf::from(str_arg(args, "path")?);
-    if !m.arena.iter().any(|node| node.path == path) {
+    if !m.arena.iter().any(|node| node.path == path) && !m.is_known_wsl_disk(&path) {
         return Err(CommandError::new(
             "RUSTVAC_UNKNOWN_PATH",
-            "only paths in the current scan can be shown",
+            "only paths in the current scan or the disk report can be shown",
         ));
     }
     reveal(&path)?;

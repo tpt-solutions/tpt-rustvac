@@ -205,10 +205,26 @@ input[type="number"] {
 .tree-head,
 .row {
   display: grid;
-  grid-template-columns: 16px 16px minmax(120px, 1fr) 84px 110px 64px;
+  grid-template-columns: 16px 22px minmax(120px, 1fr) 84px 110px 64px;
   align-items: center;
   column-gap: 6px;
   padding: 0 8px;
+}
+
+/* Row checkboxes are large so they are easy to hit. */
+.row input[type="checkbox"],
+.filters .select-all input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.filters .select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
 }
 
 .tree-head {
@@ -225,7 +241,7 @@ input[type="number"] {
 }
 
 .row {
-  min-height: 24px;
+  min-height: 30px;
   cursor: default;
   user-select: none;
 }
@@ -258,6 +274,31 @@ input[type="number"] {
 }
 
 .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Targets-only table: the project name over its full path. No tree caret. */
+.tree-pane.table .caret {
+  visibility: hidden;
+}
+
+.tree-pane.table .row {
+  min-height: 44px;
+}
+
+.cell {
+  min-width: 0;
+}
+
+.path {
+  font-size: 11px;
+  color: var(--muted);
+  /* Right-to-left cuts the text at its start, so the folder name at the end stays visible. */
+  direction: rtl;
+  unicode-bidi: plaintext;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -504,11 +545,48 @@ dialog h2 {
 
   .tree-head,
   .row {
-    grid-template-columns: 16px 16px minmax(100px, 1fr) 72px 64px;
+    grid-template-columns: 16px 22px minmax(100px, 1fr) 72px 64px;
   }
 
   .tree-head span:nth-child(5),
   .row > :nth-child(5) {
     display: none;
   }
+}
+
+.disk-panel {
+  min-width: min(640px, 90vw);
+}
+
+.disk-group {
+  margin: 12px 0;
+}
+
+.disk-group h3 {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.disk-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.disk-row > :first-child {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.disk-step {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.disk-compact pre {
+  white-space: pre-wrap;
+  margin: 4px 0 0;
 }
