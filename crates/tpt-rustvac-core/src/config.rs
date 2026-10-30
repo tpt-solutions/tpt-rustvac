@@ -26,6 +26,9 @@ pub struct Config {
     pub check_every: String,
     /// Warn when free space on the home drive drops below this, like `50GB`.
     pub warn_below: Option<String>,
+    /// When on, Rescan refreshes the tree in place and keeps checks and selection. When off,
+    /// Rescan clears the tree and scans again.
+    pub refresh_in_background: bool,
 }
 
 /// How a regenerable cache is removed. `target/` compress is unaffected: it always archives,
@@ -69,6 +72,7 @@ impl Default for Config {
             trash_max_size: "256MB".into(),
             check_every: "off".into(),
             warn_below: None,
+            refresh_in_background: false,
         }
     }
 }
