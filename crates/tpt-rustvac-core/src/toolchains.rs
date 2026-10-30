@@ -40,6 +40,13 @@ pub fn installed(rustup_home: &Path) -> Vec<Toolchain> {
     out
 }
 
+/// When rustup last touched a toolchain folder (its own mtime: installs, updates and
+/// component changes). It is not a record of the compiler being run, so treat it as a hint
+/// that an old toolchain is a candidate for removal.
+pub fn last_used(toolchain: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(toolchain).and_then(|m| m.modified()).ok()
+}
+
 /// Runs each toolchain's `rustc -vV`. Toolchains that cannot run (a half-installed folder)
 /// are left out.
 pub fn installed_rustc_versions(rustup_home: &Path) -> Vec<RustcInfo> {

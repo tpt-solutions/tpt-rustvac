@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::sweep::{SweepKind, SweepPlan};
+use crate::wsl::WslDisk;
 
 pub const JSON_NAME: &str = "recommendation.json";
 pub const TEXT_NAME: &str = "recommendation.txt";
@@ -75,6 +76,10 @@ pub struct Recommendation {
     pub warn_below: Option<u64>,
     /// True when free space is known and under `warn_below`.
     pub low_space: bool,
+    /// WSL and Docker virtual disks. Report only. Absent in recommendations saved by older
+    /// versions.
+    #[serde(default)]
+    pub wsl: Vec<WslDisk>,
 }
 
 pub struct CheckInput<'a> {
@@ -83,6 +88,7 @@ pub struct CheckInput<'a> {
     /// Free and total bytes. Injected, so tests do not depend on the real drive.
     pub space: Option<(u64, u64)>,
     pub compressible_bytes: u64,
+    pub wsl: &'a [WslDisk],
     pub warn_below: Option<u64>,
     pub now: SystemTime,
     pub top_n: usize,
@@ -118,6 +124,7 @@ pub fn build(input: &CheckInput) -> Recommendation {
         compressible_bytes: input.compressible_bytes,
         warn_below: input.warn_below,
         low_space: matches!((free, input.warn_below), (Some(f), Some(w)) if f < w),
+        wsl: input.wsl.to_vec(),
     }
 }
 
@@ -198,6 +205,7 @@ mod tests {
             drive: Path::new("C:\\Users\\x"),
             space,
             compressible_bytes: 7,
+            wsl: &[],
             warn_below: warn,
             now: SystemTime::UNIX_EPOCH + Duration::from_secs(1000),
             top_n: 2,
@@ -237,6 +245,18 @@ mod tests {
         assert_eq!(load(dir.path()).unwrap(), rec);
         assert!(dir.path().join(TEXT_NAME).is_file());
         assert!(load(&dir.path().join("nowhere")).is_none());
+    }
+
+    #[test]
+    fn an_old_recommendation_without_wsl_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = plan();
+        let rec = build(&input(&plan, Some((1, 2)), None));
+        let mut value = serde_json::to_value(&rec).unwrap();
+        value.as_object_mut().unwrap().remove("wsl");
+        std::fs::write(dir.path().join(JSON_NAME), value.to_string()).unwrap();
+        let loaded = load(dir.path()).unwrap();
+        assert!(loaded.wsl.is_empty());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Rustup and Cargo scratch folders: what they hold, and how to clear the regenerable part.
 //!
 //! Tiers:
-//! - Regenerable: rustup `tmp` and `downloads`, cargo `registry/cache`, `registry/src` and
+//! - Regenerable: rustup `tmp`, `downloads` and `update-hashes`, cargo `registry/cache`, `registry/src` and
 //!   `git/checkouts`. Removing them only costs a re-download or re-extract.
 //! - Managed: `toolchains/<name>`. Removed only through rustup, never by deleting folders.
 //! - Manual: `registry/index` and `git/db`. They need the network to rebuild, so they are
@@ -35,6 +35,7 @@ pub enum Tier {
 pub enum CacheKind {
     RustupTmp,
     RustupDownloads,
+    RustupUpdateHashes,
     CargoRegistryCache,
     CargoRegistrySrc,
     CargoGitCheckouts,
@@ -56,6 +57,7 @@ impl CacheKind {
         match self {
             CacheKind::RustupTmp => "rustup tmp",
             CacheKind::RustupDownloads => "rustup downloads",
+            CacheKind::RustupUpdateHashes => "rustup update hashes",
             CacheKind::CargoRegistryCache => "cargo registry cache",
             CacheKind::CargoRegistrySrc => "cargo registry src",
             CacheKind::CargoGitCheckouts => "cargo git checkouts",
@@ -104,6 +106,10 @@ pub fn discover(rustup_home: Option<&Path>, cargo_home: Option<&Path>) -> Vec<Ca
         items.extend(folder(
             CacheKind::RustupDownloads,
             &rustup.join("downloads"),
+        ));
+        items.extend(folder(
+            CacheKind::RustupUpdateHashes,
+            &rustup.join("update-hashes"),
         ));
         for tc in crate::toolchains::installed(rustup) {
             let agg = measure_dir(&tc.path);
@@ -292,6 +298,7 @@ mod tests {
         let cargo = dir.path().join("cargo");
         write(&rustup.join("tmp/partial-install/a"), 1000);
         write(&rustup.join("downloads/x.partial"), 500);
+        write(&rustup.join("update-hashes/stable-x"), 64);
         write(&rustup.join("toolchains/stable-x/bin/rustc"), 100);
         write(&cargo.join("registry/cache/index-1/foo.crate"), 2000);
         write(&cargo.join("registry/src/index-1/foo-1.0/lib.rs"), 3000);
@@ -305,6 +312,7 @@ mod tests {
         vec![
             CacheKind::RustupTmp,
             CacheKind::RustupDownloads,
+            CacheKind::RustupUpdateHashes,
             CacheKind::CargoRegistryCache,
             CacheKind::CargoRegistrySrc,
             CacheKind::CargoGitCheckouts,
@@ -349,7 +357,7 @@ mod tests {
         let plan = plan_clean(&items, &spec, later);
         assert!(plan.skipped.is_empty());
         let kinds: Vec<_> = plan.entries.iter().map(|e| e.kind).collect();
-        assert_eq!(kinds.len(), 5);
+        assert_eq!(kinds.len(), 6);
         assert!(!kinds.contains(&CacheKind::Toolchain));
         assert!(!kinds.contains(&CacheKind::CargoGitDb));
         assert!(plan.total_size() > 0);
@@ -366,7 +374,7 @@ mod tests {
         };
         let plan = plan_clean(&items, &spec, SystemTime::now());
         assert!(plan.entries.is_empty());
-        assert_eq!(plan.skipped.len(), 5);
+        assert_eq!(plan.skipped.len(), 6);
     }
 
     #[test]

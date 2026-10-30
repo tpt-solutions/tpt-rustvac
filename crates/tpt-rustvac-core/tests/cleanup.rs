@@ -14,7 +14,7 @@ use tpt_rustvac_core::filter::Filter;
 use tpt_rustvac_core::model::{Arena, Kind, State};
 use tpt_rustvac_core::sweep::{self, SweepInputs, SweepKind};
 use tpt_rustvac_core::target::{parse_rustc_vv, RustcInfo};
-use tpt_rustvac_core::{scan, ScanRequest};
+use tpt_rustvac_core::{disk, scan, wsl, ScanRequest};
 
 fn run_scan(root: PathBuf) -> Arena {
     let mut req = ScanRequest::rust_targets(vec![root]);
@@ -232,6 +232,7 @@ fn check_reports_the_same_total_as_sweep() {
         // Injected, so the test does not depend on the real drive.
         space: Some((10_000, 100_000)),
         compressible_bytes: 0,
+        wsl: &[],
         warn_below: Some(50_000),
         now: SystemTime::now(),
         top_n: 3,
@@ -262,6 +263,7 @@ fn check_never_lists_what_sweep_refuses() {
         drive: &w.projects,
         space: None,
         compressible_bytes: 0,
+        wsl: &[],
         warn_below: None,
         now: SystemTime::now(),
         top_n: 50,
@@ -297,4 +299,42 @@ fn installed_versions_come_from_each_toolchains_rustc() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].release, "1.99.1");
     assert_eq!(found[0].commit.as_deref(), Some("aaa"));
+}
+
+#[test]
+fn disk_report_covers_rustup_cargo_and_a_fake_wsl_disk() {
+    let w = world();
+    let local = w._dir.path().join("localappdata");
+    let vhdx = local.join("Packages/CanonicalUbuntu_x/LocalState/ext4.vhdx");
+    fs::create_dir_all(vhdx.parent().unwrap()).unwrap();
+    fs::write(&vhdx, vec![0u8; 4096]).unwrap();
+
+    let items = caches::discover(Some(&w.homes.rustup), Some(&w.homes.cargo));
+    let disks = wsl::discover(Some(&local), &[]);
+    assert_eq!(disks.len(), 1);
+    assert_eq!(disks[0].size_bytes, 4096);
+
+    let report = disk::build(&items, disks.clone(), None);
+    assert_eq!(report.wsl_bytes(), 4096);
+    assert!(report.rustup_bytes() > 0 && report.cargo_bytes() > 0);
+    assert!(report.regenerable_bytes() > 0);
+
+    // The check keeps the disk, and it survives a save and load.
+    let arena = run_scan(w.projects.clone());
+    let plan = plan_for(&w, &arena, &[], &Filter::default());
+    let rec = check::build(&CheckInput {
+        plan: &plan,
+        drive: &w.projects,
+        space: None,
+        compressible_bytes: 0,
+        wsl: &disks,
+        warn_below: None,
+        now: SystemTime::now(),
+        top_n: 3,
+    });
+    let out = w._dir.path().join("report2");
+    check::save(&out, &rec, "t").unwrap();
+    assert_eq!(check::load(&out).unwrap().wsl, disks);
+    // Reporting never touches the disk.
+    assert!(vhdx.is_file());
 }

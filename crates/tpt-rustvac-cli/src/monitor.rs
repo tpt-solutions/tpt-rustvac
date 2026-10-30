@@ -87,11 +87,13 @@ pub fn check(arena: &Arena, filter: &Filter, config: &Config, args: CheckArgs) -
         .sum();
 
     let home = home_dir().ok_or("cannot find your home directory")?;
+    let wsl_disks = tpt_rustvac_core::wsl::discover_here();
     let rec = check::build(&CheckInput {
         plan: &plan,
         drive: &home,
         space: check::disk_space(&home),
         compressible_bytes: compressible,
+        wsl: &wsl_disks,
         warn_below,
         now,
         top_n: 10,
@@ -163,6 +165,16 @@ pub fn render_report(rec: &Recommendation) -> String {
         out.push_str(&format!(
             "old targets that `rustvac compress` could archive: {}\n",
             human_bytes(rec.compressible_bytes)
+        ));
+    }
+    if let Some(d) = tpt_rustvac_core::disk::largest_wsl(&rec.wsl) {
+        let total: u64 = rec.wsl.iter().map(|d| d.size_bytes).sum();
+        out.push_str(&format!(
+            "WSL and Docker disks: {} in {} (largest: {}, {}). Report only; see `rustvac disk` for the compact steps.\n",
+            human_bytes(total),
+            rec.wsl.len(),
+            d.name,
+            human_bytes(d.size_bytes)
         ));
     }
     out

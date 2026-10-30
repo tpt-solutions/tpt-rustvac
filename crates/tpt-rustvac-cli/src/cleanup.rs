@@ -18,6 +18,7 @@ use tpt_rustvac_core::safety::{choose_removal, Removal};
 use tpt_rustvac_core::sweep::{self, SweepInputs};
 use tpt_rustvac_core::target::RustcInfo;
 use tpt_rustvac_core::toolchains;
+use tpt_rustvac_core::{disk, wsl};
 
 use crate::format::{age_label, human_bytes};
 use crate::{confirm, print_json, CmdResult};
@@ -39,7 +40,7 @@ pub enum CachesCommand {
         /// Leftovers in rustup's tmp folder.
         #[arg(long)]
         rustup_tmp: bool,
-        /// Rustup's download folder.
+        /// Rustup's download folder and update hashes.
         #[arg(long)]
         rustup_downloads: bool,
         /// Cargo's downloaded crates and unpacked sources.
@@ -251,6 +252,8 @@ struct ToolchainRow {
     size: String,
     #[tabled(rename = "Installed")]
     installed: String,
+    #[tabled(rename = "Last changed")]
+    last_used: String,
     #[tabled(rename = "Marker")]
     marker: String,
 }
@@ -261,6 +264,7 @@ struct ToolchainJson {
     path: String,
     size_bytes: u64,
     installed_unix: Option<u64>,
+    last_used_unix: Option<u64>,
     default: Option<bool>,
 }
 
@@ -320,6 +324,9 @@ fn list_toolchains(home: &Path, json: bool) -> CmdResult {
                 path: i.path.display().to_string(),
                 size_bytes: i.size,
                 installed_unix: installed_unix(&i.path),
+                last_used_unix: toolchains::last_used(&i.path)
+                    .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs()),
                 default: marker_of(&i.name).map(|m| m.0),
             })
             .collect();
@@ -340,6 +347,7 @@ fn list_toolchains(home: &Path, json: bool) -> CmdResult {
                 installed_unix(&i.path).map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s)),
                 now,
             ),
+            last_used: age_label(toolchains::last_used(&i.path), now),
             marker: match marker_of(&i.name) {
                 Some((true, _)) => "default".into(),
                 Some((_, true)) => "active".into(),
@@ -473,6 +481,7 @@ pub fn caches_command(command: Option<CachesCommand>, json: bool, config: &Confi
             }
             if rustup_downloads || !any {
                 kinds.push(CacheKind::RustupDownloads);
+                kinds.push(CacheKind::RustupUpdateHashes);
             }
             if cargo_registry || !any {
                 kinds.push(CacheKind::CargoRegistryCache);
@@ -617,4 +626,129 @@ pub fn sweep_command(
     };
     let (freed, failed) = report_removals(results, &size_of);
     finish(freed, failed, plan.items.len())
+}
+
+// ---- disk ----
+
+pub fn disk_command(json: bool) -> CmdResult {
+    let items = caches::discover(rustup_home().as_deref(), cargo_home().as_deref());
+    let space =
+        tpt_rustvac_core::config::home_dir().and_then(|h| tpt_rustvac_core::check::disk_space(&h));
+    let report = disk::build(&items, wsl::discover_here(), space);
+    let steps = disk::next_steps(&report);
+    if json {
+        #[derive(Serialize)]
+        struct WslOut<'a> {
+            #[serde(flatten)]
+            disk: &'a wsl::WslDisk,
+            compact_steps: String,
+        }
+        #[derive(Serialize)]
+        struct Out<'a> {
+            #[serde(flatten)]
+            report: &'a disk::DiskReport,
+            next_steps: &'a disk::Steps,
+            wsl_steps: Vec<WslOut<'a>>,
+        }
+        let wsl_steps = report
+            .wsl
+            .iter()
+            .map(|d| WslOut {
+                disk: d,
+                compact_steps: wsl::compact_hint(d),
+            })
+            .collect();
+        print_json(&Out {
+            report: &report,
+            next_steps: &steps,
+            wsl_steps,
+        })?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    print!("{}", render_disk(&report, &steps, SystemTime::now()));
+    Ok(ExitCode::SUCCESS)
+}
+
+pub fn render_disk(report: &disk::DiskReport, steps: &disk::Steps, now: SystemTime) -> String {
+    let mut out = String::new();
+    match (report.free_bytes, report.total_bytes) {
+        (Some(f), Some(t)) => out.push_str(&format!(
+            "free space on the home drive: {} of {}\n\n",
+            human_bytes(f),
+            human_bytes(t)
+        )),
+        _ => out.push_str("free space on the home drive: unknown\n\n"),
+    }
+    let step = |out: &mut String, s: &Option<String>| {
+        if let Some(s) = s {
+            out.push_str(&format!("  next: {s}\n"));
+        }
+        out.push('\n');
+    };
+
+    out.push_str(&format!(
+        "Rustup scratch: {}\n",
+        human_bytes(report.rustup_bytes())
+    ));
+    for i in &report.rustup {
+        out.push_str(&format!("  {:>10}  {}\n", human_bytes(i.bytes), i.label));
+    }
+    step(&mut out, &steps.rustup);
+
+    out.push_str(&format!(
+        "Toolchains: {}\n",
+        human_bytes(report.toolchain_bytes())
+    ));
+    for t in &report.toolchains {
+        let changed = age_label(
+            t.last_used_unix
+                .map(|s| SystemTime::UNIX_EPOCH + Duration::from_secs(s)),
+            now,
+        );
+        out.push_str(&format!(
+            "  {:>10}  {}  (changed {changed} ago)\n",
+            human_bytes(t.bytes),
+            t.name
+        ));
+    }
+    step(&mut out, &steps.toolchains);
+
+    out.push_str(&format!("Cargo: {}\n", human_bytes(report.cargo_bytes())));
+    for i in &report.cargo {
+        let tier = match i.tier {
+            Tier::Regenerable => "",
+            _ => "  (not part of a sweep)",
+        };
+        out.push_str(&format!(
+            "  {:>10}  {}{tier}\n",
+            human_bytes(i.bytes),
+            i.label
+        ));
+    }
+    step(&mut out, &steps.cargo);
+
+    if report.wsl.is_empty() {
+        out.push_str("WSL and Docker disks: none found\n");
+    } else {
+        out.push_str(&format!(
+            "WSL and Docker disks: {} (report only)\n",
+            human_bytes(report.wsl_bytes())
+        ));
+        for d in &report.wsl {
+            out.push_str(&format!(
+                "  {:>10}  {}  {}\n",
+                human_bytes(d.size_bytes),
+                d.name,
+                d.path.display()
+            ));
+        }
+        step(&mut out, &steps.wsl);
+        for d in &report.wsl {
+            out.push_str(&format!("To compact {}:\n", d.name));
+            for line in wsl::compact_hint(d).lines() {
+                out.push_str(&format!("  {line}\n"));
+            }
+        }
+    }
+    out
 }

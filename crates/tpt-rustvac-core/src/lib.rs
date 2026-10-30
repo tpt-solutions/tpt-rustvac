@@ -7,6 +7,7 @@ pub mod archive;
 pub mod caches;
 pub mod check;
 pub mod config;
+pub mod disk;
 pub mod error;
 pub mod filter;
 pub mod identity;
@@ -19,6 +20,7 @@ pub mod sweep;
 pub mod target;
 pub mod toolchains;
 pub mod walk;
+pub mod wsl;
 
 pub use error::{Error, Result};
 pub use model::{Arena, Kind, Node, NodeId, State};

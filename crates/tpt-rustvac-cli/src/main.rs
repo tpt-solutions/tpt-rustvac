@@ -170,6 +170,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Read-only report of rustup, cargo and WSL disk sizes, with a next step for each.
+    Disk {
+        #[arg(long)]
+        json: bool,
+    },
     /// One plan across old-compiler targets, incremental caches and the regenerable caches.
     Sweep {
         #[arg(long)]
@@ -364,6 +369,7 @@ fn run(cli: Cli) -> CmdResult {
             )
         }
         Command::Toolchains { command, json } => cleanup::toolchains_command(command, json),
+        Command::Disk { json } => cleanup::disk_command(json),
         Command::Caches { command, json } => cleanup::caches_command(command, json, &config),
         Command::Sweep {
             older_than,
