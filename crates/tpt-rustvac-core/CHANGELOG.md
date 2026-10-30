@@ -8,7 +8,7 @@ All notable changes to this crate are recorded here. The format follows
 
 ### Changed
 - On Windows a plain file's size comes from its length, rounded up to the cluster size, with no extra open. Only compressed, sparse, reparse, offline and recall-flagged files ask `GetCompressedFileSizeW`. Cluster size is read once per volume.
-- Rust-target scans measure each target on its own worker, with no nested parallel walk.
+- Rust-target scans measure each target on its own worker, with no nested parallel walk. Each target's child folders are sent as soon as it is measured, and a project's rollup once its last target is done, so the tree fills in during the scan.
 - `Arena::remove_subtree` takes a node out of the tree and fixes its ancestors' totals, without a rescan.
 
 ### Added

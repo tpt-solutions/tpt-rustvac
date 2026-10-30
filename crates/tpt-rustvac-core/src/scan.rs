@@ -214,13 +214,13 @@ struct PendingTarget {
     target_path: PathBuf,
 }
 
-/// The result of sizing one target.
-struct SizedTarget {
-    project_id: NodeId,
-    target_id: NodeId,
+/// A project's totals while its targets are still being sized.
+#[derive(Default)]
+struct Rollup {
     agg: Agg,
     busy: bool,
-    children: Vec<(PathBuf, Agg)>,
+    /// Targets of this project not yet sized.
+    left: usize,
 }
 
 #[derive(Default)]
@@ -342,118 +342,112 @@ fn run_rust_targets(req: &ScanRequest, emit: &Emitter) {
         cancel: emit.cancel.clone(),
     };
 
-    let results: Vec<SizedTarget> = targets
-        .par_iter()
-        .filter_map(|pending| {
-            let PendingTarget {
-                project_id,
-                target_id,
-                target_path,
-            } = pending;
-            if emit.is_cancelled() {
-                return None;
+    // Each target streams its own children, and the project's rollup goes out once its last
+    // target is sized, so the tree fills in during the scan. Child ids are handed out under the
+    // same lock as their `Discovered` event, so the consumer's arena index equals the id.
+    let next_child_id = Mutex::new(next_id);
+    let mut open_projects: HashMap<NodeId, Rollup> = HashMap::new();
+    for target in &targets {
+        open_projects.entry(target.project_id).or_default().left += 1;
+    }
+    let projects = Mutex::new(open_projects);
+    let root_agg = Mutex::new(Agg::default());
+
+    targets.par_iter().for_each(|pending| {
+        let PendingTarget {
+            project_id,
+            target_id,
+            target_path,
+        } = pending;
+        if emit.is_cancelled() {
+            return;
+        }
+        let measured = measure_tree_serial(target_path, &opts);
+        let agg = measured.total(target_path);
+        let busy = is_busy(agg.newest, now, req.busy_grace);
+        let root_error = measured
+            .errors
+            .iter()
+            .find(|e| e.path == *target_path)
+            .cloned();
+        for err in &measured.errors {
+            emit.failed(err.path.clone(), err.message.clone());
+        }
+        let state = match (&root_error, busy) {
+            (Some(e), _) if agg.files == 0 => State::Failed(e.message.clone()),
+            (_, true) => State::Busy,
+            _ => State::Done,
+        };
+        emit.send(ScanEvent::NodeDone {
+            id: *target_id,
+            size: agg.size,
+            files: agg.files,
+            newest: agg.newest,
+            state,
+        });
+        let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+        emit.send(ScanEvent::Progress {
+            done: finished,
+            total,
+        });
+
+        // One level below the target (debug/, release/, ...). Deeper levels are not built.
+        {
+            let mut next = next_child_id.lock().unwrap_or_else(|e| e.into_inner());
+            for (path, child) in measured.dirs.iter().filter(|(p, _)| {
+                p.parent() == Some(target_path.as_path()) && p.as_path() != target_path.as_path()
+            }) {
+                let id = NodeId(*next);
+                *next += 1;
+                emit.send(ScanEvent::Discovered {
+                    id,
+                    parent: Some(*target_id),
+                    name: display_name(path),
+                    path: path.clone(),
+                    kind: Kind::Directory,
+                    is_target: false,
+                });
+                emit.send(ScanEvent::NodeDone {
+                    id,
+                    size: child.size,
+                    files: child.files,
+                    newest: child.newest,
+                    state: done_state(child, now, req.busy_grace),
+                });
             }
-            let measured = measure_tree_serial(target_path, &opts);
-            let agg = measured.total(target_path);
-            let busy = is_busy(agg.newest, now, req.busy_grace);
-            let root_error = measured
-                .errors
-                .iter()
-                .find(|e| e.path == *target_path)
-                .cloned();
-            for err in &measured.errors {
-                emit.failed(err.path.clone(), err.message.clone());
-            }
-            let state = match (&root_error, busy) {
-                (Some(e), _) if agg.files == 0 => State::Failed(e.message.clone()),
-                (_, true) => State::Busy,
-                _ => State::Done,
-            };
+        }
+
+        root_agg.lock().unwrap_or_else(|e| e.into_inner()).add(&agg);
+        let mut open = projects.lock().unwrap_or_else(|e| e.into_inner());
+        let rollup = open.entry(*project_id).or_default();
+        rollup.agg.add(&agg);
+        rollup.busy |= busy;
+        rollup.left -= 1;
+        if rollup.left == 0 {
             emit.send(ScanEvent::NodeDone {
-                id: *target_id,
-                size: agg.size,
-                files: agg.files,
-                newest: agg.newest,
-                state,
+                id: *project_id,
+                size: rollup.agg.size,
+                files: rollup.agg.files,
+                newest: rollup.agg.newest,
+                state: if rollup.busy {
+                    State::Busy
+                } else {
+                    State::Done
+                },
             });
-            let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-            emit.send(ScanEvent::Progress {
-                done: finished,
-                total,
-            });
-            // One level below the target (debug/, release/, ...). Deeper levels are not built.
-            let children = measured
-                .dirs
-                .iter()
-                .filter(|(p, _)| {
-                    p.parent() == Some(target_path.as_path())
-                        && p.as_path() != target_path.as_path()
-                })
-                .map(|(p, a)| (p.clone(), *a))
-                .collect();
-            Some(SizedTarget {
-                project_id: *project_id,
-                target_id: *target_id,
-                agg,
-                busy,
-                children,
-            })
-        })
-        .collect();
+        }
+    });
 
     if emit.is_cancelled() {
         return;
     }
 
-    // Phase 3: add the target's child folders to the arena, then roll targets up
-    // into their projects, then the root. Ids are assigned here, in order, so the
-    // consumer's arena indices match.
-    for sized in &results {
-        for (path, agg) in &sized.children {
-            let id = NodeId(next_id);
-            next_id += 1;
-            emit.send(ScanEvent::Discovered {
-                id,
-                parent: Some(sized.target_id),
-                name: display_name(path),
-                path: path.clone(),
-                kind: Kind::Directory,
-                is_target: false,
-            });
-            emit.send(ScanEvent::NodeDone {
-                id,
-                size: agg.size,
-                files: agg.files,
-                newest: agg.newest,
-                state: done_state(agg, now, req.busy_grace),
-            });
-        }
-    }
-
-    let mut by_project: HashMap<NodeId, (Agg, bool)> = HashMap::new();
-    let mut root_agg = Agg::default();
-    for sized in &results {
-        let entry = by_project.entry(sized.project_id).or_default();
-        entry.0.add(&sized.agg);
-        entry.1 |= sized.busy;
-        root_agg.add(&sized.agg);
-    }
-    for target in &targets {
-        if let Some((agg, busy)) = by_project.get(&target.project_id) {
-            emit.send(ScanEvent::NodeDone {
-                id: target.project_id,
-                size: agg.size,
-                files: agg.files,
-                newest: agg.newest,
-                state: if *busy { State::Busy } else { State::Done },
-            });
-        }
-    }
+    let root = root_agg.into_inner().unwrap_or_else(|e| e.into_inner());
     emit.send(ScanEvent::NodeDone {
         id: root_id,
-        size: root_agg.size,
-        files: root_agg.files,
-        newest: root_agg.newest,
+        size: root.size,
+        files: root.files,
+        newest: root.newest,
         state: State::Done,
     });
 }
