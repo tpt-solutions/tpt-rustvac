@@ -139,7 +139,7 @@ cargo run -p tpt-rustvac-core --example make_fixtures -- fixtures/generated
 | --- | --- |
 | `tpt-rustvac-core` | Scan, measure, archive, restore. No UI code. |
 | `tpt-rustvac-cli` | The `rustvac` binary. |
-| `tpt-rustvac-gui` | The `rustvac-gui` binary. A web UI in a window, hosted by tpt-shell (WebView2 on Windows). Needs `WebView2Loader.dll` next to the binary. |
+| `tpt-rustvac-gui` | The `rustvac-gui` binary. A web UI in a window, hosted by tpt-shell (WebView2 on Windows). The WebView2 loader is compiled in, so the binary runs on its own. |
 
 ## Scope (v1)
 

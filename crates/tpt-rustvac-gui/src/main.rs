@@ -15,17 +15,23 @@ use model::Model;
 
 /// The origin tpt-shell serves the embedded page from. Grants name it.
 const ORIGIN: &str = "https://tpt-app.localhost";
-const LOADER: &str = "WebView2Loader.dll";
+
+/// The WebView2 loader, compiled in so the exe runs on its own. See `vendor/NOTICE.md`.
+#[cfg(windows)]
+const WEBVIEW2_LOADER: &[u8] = include_bytes!("../vendor/WebView2Loader.dll");
 
 fn main() -> tpt_shell::Result<()> {
     install_crash_log();
+    let loader = loader_path()?;
     let mut model = Model::new();
     model.start_scan();
     let model = Arc::new(Mutex::new(model));
 
-    let app = App::new()
-        .name("rustvac")
-        .loader(loader_path())
+    let mut app = App::new().name("rustvac");
+    if let Some(loader) = loader {
+        app = app.loader(loader);
+    }
+    let app = app
         .assets(embed_dir!("web"))
         .window(Window::new("main").title("tpt-rustvac").size(1100.0, 640.0))
         // The page is the app's own UI, so the grants cover every path the user can pick.
@@ -74,13 +80,49 @@ fn install_crash_log() {
     }));
 }
 
-/// `WebView2Loader.dll` from the app's folder, or the path in `RUSTVAC_WEBVIEW2_LOADER`.
-fn loader_path() -> PathBuf {
+/// The WebView2 loader to use: the file named by `RUSTVAC_WEBVIEW2_LOADER` if set, else the
+/// copy compiled into the exe, written out on first use. `None` off Windows, where no loader
+/// is needed.
+fn loader_path() -> tpt_shell::Result<Option<PathBuf>> {
     if let Some(path) = std::env::var_os("RUSTVAC_WEBVIEW2_LOADER") {
-        return path.into();
+        return Ok(Some(path.into()));
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(LOADER)))
-        .unwrap_or_else(|| PathBuf::from(LOADER))
+    extract_loader()
+}
+
+#[cfg(windows)]
+fn extract_loader() -> tpt_shell::Result<Option<PathBuf>> {
+    let dir = default_config_path()
+        .and_then(|config| config.parent().map(|dir| dir.join("runtime")))
+        .unwrap_or_else(|| std::env::temp_dir().join("rustvac"));
+    // The name carries a hash of the contents, so a new build never overwrites a loader that
+    // another running copy has open.
+    let path = dir.join(format!("WebView2Loader-{:016x}.dll", fnv1a(WEBVIEW2_LOADER)));
+    let fail = |e: std::io::Error| {
+        tpt_shell::Error::Backend(format!(
+            "could not write WebView2Loader.dll to {}: {e}",
+            dir.display()
+        ))
+    };
+    let present = std::fs::metadata(&path).is_ok_and(|m| m.len() == WEBVIEW2_LOADER.len() as u64);
+    if !present {
+        std::fs::create_dir_all(&dir).map_err(fail)?;
+        let tmp = dir.join(format!("WebView2Loader-{}.tmp", std::process::id()));
+        std::fs::write(&tmp, WEBVIEW2_LOADER).map_err(fail)?;
+        std::fs::rename(&tmp, &path).map_err(fail)?;
+    }
+    Ok(Some(path))
+}
+
+#[cfg(not(windows))]
+fn extract_loader() -> tpt_shell::Result<Option<PathBuf>> {
+    Ok(None)
+}
+
+/// 64-bit FNV-1a. Only names the extracted loader; it is not a security check.
+#[cfg(windows)]
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }

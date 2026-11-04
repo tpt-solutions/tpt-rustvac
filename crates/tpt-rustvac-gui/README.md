@@ -7,6 +7,8 @@ engine behind a tree view, hosted by [tpt-shell](https://github.com/tpt-solution
 - Filters and keyboard shortcuts
 - Two-step confirmation before anything is archived
 
-Windows only so far. It uses WebView2 and needs `WebView2Loader.dll` next to the binary.
+Windows only so far. It uses WebView2. The WebView2 loader (`vendor/WebView2Loader.dll`) is compiled
+into the binary and written to `%APPDATA%\rustvac\runtime\` on first run. Set
+`RUSTVAC_WEBVIEW2_LOADER` to use a different loader. See `vendor/NOTICE.md`.
 
 Licensed under MIT or Apache-2.0, at your option.
