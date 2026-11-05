@@ -215,7 +215,7 @@
       line.append(el("span", "", row.label));
       if (row.note) line.append(el("span", "muted", row.note));
       line.append(el("span", "num", human(row.bytes)));
-      if (row.path && row.reveal) {
+      if (row.path) {
         const button = el("button", "", "Reveal");
         button.type = "button";
         button.addEventListener("click", () => send("path.reveal", { path: row.path }));
@@ -250,6 +250,7 @@
         report.toolchains.map((t) => ({
           label: t.name,
           bytes: t.bytes,
+          path: t.path,
           note: t.last_used_unix === null ? "" : `changed ${new Date(t.last_used_unix * 1000).toLocaleDateString()}`,
         })),
         steps.toolchains,
@@ -260,6 +261,7 @@
         report.cargo.map((c) => ({
           label: c.label,
           bytes: c.bytes,
+          path: c.path,
           note: c.tier === "regenerable" ? "" : "not part of a sweep",
         })),
         steps.cargo,
@@ -276,7 +278,6 @@
             label: w.name,
             bytes: w.size_bytes,
             path: w.path,
-            reveal: true,
             note: w.kind,
           })),
           steps.wsl,
@@ -284,6 +285,7 @@
       );
       for (const compact of report.wslCompact) {
         const details = el("details", "disk-compact");
+        details.open = true;
         details.append(el("summary", "", `Compact steps for ${compact.path}`));
         details.append(el("pre", "", compact.steps));
         groups.push(details);

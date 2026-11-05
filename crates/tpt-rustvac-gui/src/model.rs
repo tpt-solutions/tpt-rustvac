@@ -220,11 +220,15 @@ impl Model {
         self.disk_rx.is_some()
     }
 
-    /// True when `path` is a WSL or Docker disk in the last report.
-    pub fn is_known_wsl_disk(&self, path: &Path) -> bool {
-        self.disk
-            .as_ref()
-            .is_some_and(|d| d.report.wsl.iter().any(|w| w.path == path))
+    /// True when `path` is a folder or WSL/Docker disk named in the last disk report.
+    pub fn is_known_disk_path(&self, path: &Path) -> bool {
+        self.disk.as_ref().is_some_and(|d| {
+            let r = &d.report;
+            r.rustup.iter().any(|i| i.path == path)
+                || r.cargo.iter().any(|i| i.path == path)
+                || r.toolchains.iter().any(|t| t.path == path)
+                || r.wsl.iter().any(|w| w.path == path)
+        })
     }
 
     pub fn new() -> Self {

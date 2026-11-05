@@ -7,7 +7,7 @@ All notable changes to this crate are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
-- A Disk health panel (`disk.refresh`): rustup, toolchain, cargo and WSL/Docker disk sizes with next steps. WSL disks have Reveal and the manual compact steps, and no delete button. Measured on a background thread.
+- A Disk health panel (`disk.refresh`): rustup, toolchain, cargo and WSL/Docker disk sizes with next steps. Rustup, toolchain, cargo and WSL/Docker rows have Reveal, which opens Explorer on the folder. WSL disks also have the manual compact steps, and no delete button. Measured on a background thread.
 - Selection: shift-click checks a range of rows, a "Check by rule" menu checks targets older than 30 or 90 days, larger than 100 MB or 1 GB, or not archived, and Esc or Ctrl+Shift+A clears the checks.
 - The status bar shows how many targets are checked and the space they would free. The action buttons show how many they act on.
 - The select-all box compares against the targets that can be acted on, so a busy or kept target does not leave it half-ticked.

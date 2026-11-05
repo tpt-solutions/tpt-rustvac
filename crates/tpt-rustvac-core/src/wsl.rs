@@ -124,9 +124,11 @@ pub fn compact_hint(disk: &WslDisk) -> String {
     let path = disk.path.display();
     match disk.kind {
         WslKind::Distro => format!(
-            "1. In the distro, clear what you no longer need (for example `rustvac sweep` there).\n\
-             2. In PowerShell: wsl --shutdown\n\
-             3. Then, as administrator: Optimize-VHD -Path \"{path}\" -Mode Full\n\
+            "1. Inside the distro, delete what you no longer need. For example: `sudo apt-get clean`,\n\
+             \x20  `cargo clean` in old projects, or `rustvac sweep` if rustvac is installed there.\n\
+             2. Inside the distro, hand the freed blocks back to the disk: `sudo fstrim -av`\n\
+             3. In PowerShell: wsl --shutdown\n\
+             4. Then, as administrator: Optimize-VHD -Path \"{path}\" -Mode Full\n\
              \x20  (without Hyper-V, use diskpart: select vdisk file=\"{path}\", attach vdisk readonly, compact vdisk, detach vdisk)"
         ),
         WslKind::Docker => format!(

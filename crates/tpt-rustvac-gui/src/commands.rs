@@ -612,7 +612,7 @@ fn pick_folder(_: Option<PathBuf>) -> Result<Option<PathBuf>, CommandError> {
 /// Opens Explorer with the item selected. Only paths that are in the scan are accepted.
 fn path_reveal(m: &mut Model, args: &Value) -> Result<Value, CommandError> {
     let path = PathBuf::from(str_arg(args, "path")?);
-    if !m.arena.iter().any(|node| node.path == path) && !m.is_known_wsl_disk(&path) {
+    if !m.arena.iter().any(|node| node.path == path) && !m.is_known_disk_path(&path) {
         return Err(CommandError::new(
             "RUSTVAC_UNKNOWN_PATH",
             "only paths in the current scan or the disk report can be shown",

@@ -128,8 +128,8 @@ pub fn next_steps(report: &DiskReport) -> Steps {
         cargo: regenerable(&report.cargo)
             .then(|| "run `rustvac caches clean --cargo-registry --cargo-git`".to_string()),
         wsl: (!report.wsl.is_empty()).then(|| {
-            "WSL disks only grow. Clear space inside the distro, then compact the disk by hand \
-             (rustvac never does this). Use `rustvac disk --json` for the exact steps."
+            "WSL disks only grow. Free space inside the distro, trim it, shut WSL down, then \
+             compact the disk by hand (rustvac never does this). The steps are listed under the disk."
                 .to_string()
         }),
     }
